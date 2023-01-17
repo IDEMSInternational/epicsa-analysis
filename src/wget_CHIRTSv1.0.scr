@@ -1,0 +1,19 @@
+#!/bin/bash
+#=======================================================#
+# Download CHIRTS v1.0 temperature estimates   
+#-------------------------------------------------------#
+#=======================================================#
+
+# Specify start and end years
+start_year=1983
+end_year=2016
+
+for YYYY in $(eval echo "{$start_year..$end_year}"); do
+	filename_tmax=Tmax.$YYYY.nc
+	filename_tmin=Tmin.$YYYY.nc
+	echo $filename_tmax
+	wget http://data.chc.ucsb.edu/products/CHIRTSdaily/v1.0/africa_netcdf_p05/$filename_tmax
+	echo $filename_tmin
+	wget http://data.chc.ucsb.edu/products/CHIRTSdaily/v1.0/africa_netcdf_p05/$filename_tmin
+done
+

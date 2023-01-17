@@ -1,0 +1,17 @@
+#!/bin/bash
+#=======================================================#
+# Download CHIRPS v2.0 rainfall estimates   
+#-------------------------------------------------------#
+#=======================================================#
+
+# Specify start and end years
+start_year=1981
+end_year=2022
+
+# Example for daily rainfall
+for YYYY in $(eval echo "{$start_year..$end_year}"); do
+	filename=chirps-v2.0.$YYYY.days_p05.nc
+	echo $filename
+	wget https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/netcdf/p05/$filename
+done
+
