@@ -9,6 +9,10 @@
 Data/
 data/
 
+#Avoid the Results or results directory
+Results/
+results/
+
 # User-specific files
 .Ruserdata
 
@@ -38,6 +42,10 @@ vignettes/*.pdf
 # Temporary files created by R markdown
 *.utf8.md
 *.knit.md
+
+#Markdown html and pdfs
+*.html
+*.pdf
 
 # R Environment Variables
 .Renviron
