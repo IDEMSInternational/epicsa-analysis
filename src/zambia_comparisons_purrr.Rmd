@@ -34,8 +34,7 @@ library(dplyr)
 ```{r setup, include=FALSE}
 source(here("src", "helper_funs.R"))
 
-zm_rds <- readRDS(here("data", "satellite", "merged_data.RDS"))
-zm <-zm_rds$get_data_frame(data_name = "final_merged") 
+zm <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
 if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
 
 zm <- zm %>% 
@@ -71,15 +70,13 @@ zm_long <- zm %>%
   mutate(rainday = rain > 1)
 
 zm_long$product <- recode(zm_long$product, rain = "station")
-zm_long$station <- recode(zm_long$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
 
 stations <- c("Moorings", "Choma", "Kasama", "Livingstone", "Magoye", "Mansa", "Mpika", "Chipata", "Petauke")
 products <- levels(zm_long$product)
 products <- products[-1]
 names(products) <- substr(products, 1, nchar(products) - 5)
 
-metadata_zm <- readRDS(here("data", "station", "zambia_metadata.RDS"))
-metadata_zm$station <- recode(metadata_zm$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
+metadata_zm <- readRDS(here("data", "station", "cleaned", "zambia_station_metadata_cleaned.RDS"))
 
 metadata_zm$station <- factor(metadata_zm$station, levels = stations)
 zm_long$station <- factor(zm_long$station, levels = stations)
@@ -104,12 +101,6 @@ skable <- function(kable_input) {
 }
 ```
 
-## Stations
-
-- Mansa and Kasama are the only station in the North. 
-- It's results are different to the other three, which could be the location or the quality of the station
-- Would be useful to have further stations in the North
-- Station data filtered to start in 1979 (earliest product year)
 
 ```{r}
 metadata_zm %>% 
@@ -246,15 +237,7 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats) {
 }
 ```
 
-### Comparison Statistics for Total Yearly Rainfall
 
-- In general all products follow a similar shape each year (high correlation)
-- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias).
-- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
-- RFE2 and IMERG look promising across all measures, but few years compared, need the extended station records for better comparison
-- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
-- Slightly less variability in all products, between 70% - 90% (apart from RFE2 which has roughly the same variability)
-- Results for Mansa are generally different across products, indicating possible issues with the station records
 
 ```{r yearly_total_plots}
 p_syear_total <- gof_pr %>%
@@ -284,15 +267,6 @@ dat %>%
 ```{r yearly_total_rain_tables, results="asis"}
 stats_tables(gof_syear, "gof__total_rain")
 ```
-
-
-### Comparison Statistics for Number of rainy days
-
-- Reasonably good correlation across the products, so similar pattern each year
-- All products overestimate number of rainy days with the same threshold
-- Wide variation of the bias amount across products, ERA5 has largest bias, CHIPS has lowest
-- Almost the same variability for all products
-- Results for Mansa are generally different across products, indicating possible issues with the station records
 
 ```{r yearly_n_rain_plots}
 p_syear_n <- gof_pr %>%
@@ -371,14 +345,6 @@ monthly_plots <- function(df, stat_pr, stat_st, product_name) {
 }
 ```
 
-### Comparison statistics for total monthly rainfall
-- In general all products follow a similar shape each year (high correlation)
-- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias), with a very slight underestimation compared to yearly totals
-- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
-- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
-- Slightly less variability in all products, between 80% - 100%
-- Generally higher correlations and better s.d. ratios than yearly totals
-- Results for Mansa are generally different across products, indicating possible issues with the station records
 
 ```{r monthly_plots_total_rain}
 p_month_total <- gof_pr_month %>%
@@ -395,10 +361,6 @@ walk(p_month_total$p, print)
 stats_tables(gof_month, "gof__total_rain")
 ```
 
-### Comparison statistics for number of monthly raindays
-- Generally high correlation for all products
-- As shown in the Markov Chain models, the bias varies across products, between 1 - 14 days per month. ARC2 & CHIRPS lowest (1-2 days), TAMSAT (3 days), IMERG & RFE2 (6-7 days), ERA5 (14 days)
-- Generally the products have the same or slightly higher variability
 
 ```{r monthly_plots_n_rain}
 p_month_total <- gof_pr_month %>%
