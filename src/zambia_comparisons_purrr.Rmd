@@ -1,0 +1,416 @@
+---
+title: "Zambia Comparisons"
+author: "Danny Parsons"
+date: "11/06/2020"
+output: 
+  html_document:
+    fig_width: 12
+    fig_height: 6
+---
+
+```{r packages, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(here)
+library(ggplot2)
+library(lubridate)
+library(reshape2)
+library(viridis)
+library(RColorBrewer)
+library(tidyr)
+library(hydroGOF)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(ggrepel)
+library(sp)
+library(tibble)
+library(verification)
+library(purrr)
+library(dplyr)
+```
+
+```{r setup, include=FALSE}
+source(here("src", "helper_funs.R"))
+
+zm_rds <- readRDS(here("data", "satellite", "merged_data.RDS"))
+zm <-zm_rds$get_data_frame(data_name = "final_merged") 
+if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
+
+zm <- zm %>% 
+  select(station, date, rain, chirps_rain, chirp_rain, era5_rain, tamsat_rain)
+# 1 Aug = 214
+s_doy_start <- 214
+zm <- zm %>% mutate(doy = yday_366(date),
+                    year = year(date),
+                    month = month(date),
+                    s_doy = (doy - s_doy_start + 1) %% 366,
+                    s_doy = ifelse(s_doy == 0, 366, s_doy),
+                    syear = year,
+                    syear = ifelse(s_doy > (366 - s_doy_start + 1), syear - 1, syear),
+                    month = factor(month, levels = c(8:12, 1:7)),
+                    month_abb = factor(month, labels = month.abb[c(8:12, 1:7)]),
+                    rain = ifelse(rain < 0, 0, rain),
+                    era5_rain = ifelse(era5_rain < 0, 0, era5_rain),
+                    chirps_rain = ifelse(chirps_rain < 0, 0, chirps_rain), 
+                    chirp_rain = ifelse(chirp_rain < 0, 0, chirp_rain), 
+                    tamsat_rain = ifelse(tamsat_rain < 0, 0, tamsat_rain)
+                    )
+
+zm_long_st <- zm %>% 
+  melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", 
+                   "doy", "s_doy", "rain"),
+       measure.vars = names(zm)[endsWith(names(zm), "rain")][-1],
+       variable.name = "product", value.name = "pr_rain")
+
+zm_long <- zm %>% 
+  melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", "doy", "s_doy"),
+       measure.vars = names(zm)[endsWith(names(zm), "rain")],
+       variable.name = "product", value.name = "rain") %>%
+  mutate(rainday = rain > 1)
+
+zm_long$product <- recode(zm_long$product, rain = "station")
+zm_long$station <- recode(zm_long$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
+
+stations <- c("Moorings", "Choma", "Kasama", "Livingstone", "Magoye", "Mansa", "Mpika", "Chipata", "Petauke")
+products <- levels(zm_long$product)
+products <- products[-1]
+names(products) <- substr(products, 1, nchar(products) - 5)
+
+metadata_zm <- readRDS(here("data", "station", "zambia_metadata.RDS"))
+metadata_zm$station <- recode(metadata_zm$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
+
+metadata_zm$station <- factor(metadata_zm$station, levels = stations)
+zm_long$station <- factor(zm_long$station, levels = stations)
+
+by_station <- zm_long %>%
+  group_by(station) %>%
+  filter(!is.na(rain) & product == "station") %>%
+  summarise(first_date = first(date),
+            last_date = last(date))
+
+metadata_zm <- left_join(metadata_zm, by_station, by = "station")
+rm(by_station)
+
+zm_long <- left_join(zm_long, metadata_zm, by = "station")
+
+zm_long <- zm_long %>% 
+  filter(date >= first_date & date <= last_date)
+
+skable <- function(kable_input) {
+  kable_input %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                                full_width = FALSE)
+}
+```
+
+## Stations
+
+- Mansa and Kasama are the only station in the North. 
+- It's results are different to the other three, which could be the location or the quality of the station
+- Would be useful to have further stations in the North
+- Station data filtered to start in 1979 (earliest product year)
+
+```{r}
+metadata_zm %>% 
+  dplyr::select(station, latitude, longitude, first_date, last_date) %>%
+  kable(digits = 2) %>%
+  skable()
+```
+
+
+```{r station_map, fig.width=9, fig.height=4.5}
+sf_zm <- ne_countries(country = "Zambia", returnclass = "sf")
+ggplot(sf_zm) + 
+  geom_sf() +
+  geom_point(data = metadata_zm, aes(x = longitude, y = latitude)) +
+  geom_text_repel(data = metadata_zm, aes(x = longitude, y = latitude, label = station))
+rm(sf_zm)
+```
+
+```{r gof_fun}
+dgof <- function(df, sim, obs, na.rm = TRUE) {
+  g <- hydroGOF::gof(sim = df[[sim]], obs = df[[obs]], na.rm = na.rm)
+  as.list(g[ ,1])
+}
+
+comp_stats <- c("r", "ME", "PBIAS %", "MAE", "NSE", "rSD")
+names(comp_stats) <- c("Correlation coefficient (1 = Perfect)",
+                       "Mean bias (same units)",
+                       "Percentage bias (%)",
+                       "Mean absolute bias (same units)",
+                       "Nash-Sutcliffe efficiency (1 = Perfect)",
+                       "Ratio of standard deviations (< 1 less variable, > 1 more variable)")
+
+comp_stats_digits <- c(2, 0, 0, 0, 2, 3)
+```
+
+## Yearly Comparisons (August to July)
+
+```{r yearly_calcs}
+by_syear <- zm_long %>%
+  group_by(station, syear, product) %>%
+  summarise(total_rain = sum(naif_nmin(rain, 355)), 
+            n_rain = sum(naif_nmin(rain, 355) > 0.1), 
+            max_rain = max(naif_nmin(rain, 350)), 
+            mean_rain = total_rain/n_rain, 
+            n_na = sum(is.na(rain))
+            )
+
+by_syear_st <- by_syear %>%
+  pivot_wider(id_cols = c(station, syear), 
+              names_from = product, values_from = total_rain:n_na, names_sep = "__") %>%
+  pivot_longer(cols = -c(station, syear, ends_with("station")), 
+               names_to = c(".value", "product"), names_sep = "__")
+
+gof_syear <- by_syear_st %>%
+  group_by(station, product) %>%
+  nest() %>%
+  mutate(n = purrr::map_int(data, 
+                        ~sum(!is.na(.$total_rain__station) & !is.na(.$total_rain))),
+         gof__total_rain = purrr::map(data, dgof, "total_rain", "total_rain__station", 
+                                      na.rm = TRUE),
+         gof__n_rain = purrr::map(data, dgof, "n_rain", "n_rain__station", na.rm = TRUE),
+         gof__mean_rain = purrr::map(data, dgof, "mean_rain", "mean_rain__station", 
+                                     na.rm = TRUE)
+         )
+
+gof_pr <- gof_syear %>% 
+  unnest(cols = data) %>% 
+  group_by(product) %>% 
+  nest()
+```
+
+```{r yearly_plots_fun}
+yearly_plots <- function(df, gof_col, stat_pr, stat_st, product_name) {
+  max_y <- max(c(df[[stat_pr]], df[[stat_st]]), na.rm = TRUE)
+  vals_relace <- c(product_name, "station")
+  names(vals_relace) <- c(stat_pr, stat_st)
+  dat <- df %>% 
+    pivot_longer(cols = c(stat_pr, stat_st), names_to = "product", values_to = stat_pr) %>%
+    mutate(product = recode(product, !!!vals_relace),
+           ME = purrr::map_dbl(.data[[gof_col]], "ME"),
+           r = purrr::map_dbl(.data[[gof_col]], "r"),
+           rSD = purrr::map_dbl(.data[[gof_col]], "rSD")
+           )
+  mean_df <- dat %>% 
+    group_by(station, product) %>% 
+    summarise(m = mean(.data[[stat_pr]], na.rm = TRUE))
+  g <- ggplot(dat, aes(x = syear, y = .data[[stat_pr]], colour = product)) +
+    geom_line() +
+    geom_point() +
+    geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
+    scale_x_continuous(limits = c(1979, 2012)) +
+    # n
+    geom_text(data = dat, aes(label = paste("n", n)), size = 4,
+              x = 1979, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    # bias
+    geom_text(data = dat, aes(label = paste("bias", signif(ME, 2))), 
+              size = 4, x = 1979 + 6, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    # cor
+    geom_text(aes(label = paste("cor", round(r, 2))), 
+              size = 4, x = 1979 + 14, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    # rSD
+    geom_text(aes(label = paste("rSD", round(rSD, 2))), 
+              size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
+    facet_wrap(~station)
+  g
+}
+```
+
+```{r stats_tables_fun}
+stats_tables <- function(df, obj_col, obj_stats = comp_stats) {
+  for(i in seq_along(obj_stats)) {
+    dat <- df %>% 
+      ungroup() %>%
+      mutate(purrr::map_dbl(df[[obj_col]], obj_stats[i]))
+    names(dat)[ncol(dat)] <- obj_stats[i]
+    dat <- dat %>% 
+      mutate(station = as.character(station)) %>%
+      pivot_wider(id_cols = "station", names_from = "product", 
+                  values_from = obj_stats[[i]]) %>%
+      data.frame()
+  dat[nrow(dat) + 1, ] <- c(list("(All)"), as.list(as.numeric(colMeans(dat[ , -1]))))
+  dat %>%
+    kable(digits = comp_stats_digits[i], caption = names(obj_stats[i]), 
+          format.args = list(big.mark = ",")) %>%
+    skable() %>%
+    row_spec(nrow(dat), bold = TRUE) %>%
+    print()
+  }
+}
+```
+
+### Comparison Statistics for Total Yearly Rainfall
+
+- In general all products follow a similar shape each year (high correlation)
+- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias).
+- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
+- RFE2 and IMERG look promising across all measures, but few years compared, need the extended station records for better comparison
+- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
+- Slightly less variability in all products, between 70% - 90% (apart from RFE2 which has roughly the same variability)
+- Results for Mansa are generally different across products, indicating possible issues with the station records
+
+```{r yearly_total_plots}
+p_syear_total <- gof_pr %>%
+  mutate(p = purrr::map(data, yearly_plots, gof_col = "gof__total_rain", 
+                        stat_pr = "total_rain", stat_st = "total_rain__station", 
+                        product_name = product),
+         paths = here("results", "zambia", 
+                      paste0("zambia_", "syear_", "total_rain", "_", product, ".png")))
+
+walk2(p_syear_total$paths, p_syear_total$p, ggsave, width = 12, height = 6)
+walk(p_syear_total$p, print)
+```
+
+```{r yearly_n_obs, results="asis"}
+dat <- gof_syear %>% 
+  dplyr::select(station, product, n) %>%
+  pivot_wider(id_cols = c(station), names_from = product, values_from = n)
+
+names(dat)[endsWith(names(dat), "rain")] <- 
+  substr(names(dat)[endsWith(names(dat), "rain")], 
+         1, nchar(names(dat)[endsWith(names(dat), "rain")]) - 5)
+dat %>%
+  kable(caption = "Number of years compared") %>%
+  skable()
+```
+
+```{r yearly_total_rain_tables, results="asis"}
+stats_tables(gof_syear, "gof__total_rain")
+```
+
+
+### Comparison Statistics for Number of rainy days
+
+- Reasonably good correlation across the products, so similar pattern each year
+- All products overestimate number of rainy days with the same threshold
+- Wide variation of the bias amount across products, ERA5 has largest bias, CHIPS has lowest
+- Almost the same variability for all products
+- Results for Mansa are generally different across products, indicating possible issues with the station records
+
+```{r yearly_n_rain_plots}
+p_syear_n <- gof_pr %>%
+  mutate(p = purrr::map(data, yearly_plots, gof_col = "gof__n_rain", 
+                        stat_pr = "n_rain", stat_st = "n_rain__station", 
+                        product_name = product),
+         paths = here("results", "zambia", 
+                      paste0("zambia_", "syear_", "n_rain", "_", product, ".png")))
+
+walk2(p_syear_n$paths, p_syear_n$p, ggsave, width = 12, height = 6)
+walk(p_syear_n$p, print)
+```
+
+```{r yearly_n_rain_tables, results="asis"}
+stats_tables(gof_syear, "gof__n_rain")
+```
+
+## Monthly Comparisons (November to April)
+
+```{r monthly_calcs}
+by_month <- zm_long %>%
+  group_by(station, syear, month_abb, product) %>%
+  filter(month %in% c(11:12, 1:4)) %>%
+  summarise(total_rain = sum(naif_nmin(rain, 25)), 
+            n_rain = sum(naif_nmin(rain, 25) > 0.1), 
+            max_rain = max(naif_nmin(rain, 20)), 
+            mean_rain = total_rain/n_rain, 
+            n_na = sum(is.na(rain))
+            )
+
+by_month_st <- by_month %>%
+  pivot_wider(id_cols = c(station, syear, month_abb), 
+              names_from = product, values_from = total_rain:n_na, names_sep = "__") %>%
+  pivot_longer(cols = -c(station, syear, month_abb, ends_with("station")), 
+               names_to = c(".value", "product"), names_sep = "__")
+
+gof_month <- by_month_st %>%
+  group_by(station, product) %>%
+  nest() %>%
+  mutate(n = purrr::map_int(data, 
+                        ~sum(!is.na(.$total_rain__station) & !is.na(.$total_rain))),
+         gof__total_rain = purrr::map(data, dgof, "total_rain", "total_rain__station", 
+                                      na.rm = TRUE),
+         gof__n_rain = purrr::map(data, dgof, "n_rain", "n_rain__station", na.rm = TRUE),
+         # gof__mean_rain = purrr::map(data, dgof, "mean_rain", "mean_rain__station", 
+         #                             na.rm = TRUE)
+         )
+
+gof_pr_month <- gof_month %>%
+  unnest(cols = data) %>% 
+  group_by(product) %>% 
+  nest()
+```
+
+```{r monthly_plots_fun}
+monthly_plots <- function(df, stat_pr, stat_st, product_name) {
+  vals_relace <- c(product_name, "station")
+  names(vals_relace) <- c(stat_pr, stat_st)
+  dat <- df %>% 
+    filter(month_abb %in% month.abb[c(11:12, 1:4)]) %>%
+    pivot_longer(cols = c(stat_pr, stat_st), names_to = "product", values_to = stat_pr) %>%
+    mutate(product = recode(product, !!!vals_relace))
+
+  mean_df <- dat %>% 
+    group_by(station, product, month_abb) %>% 
+    summarise(m = mean(.data[[stat_pr]], na.rm = TRUE))
+
+  g <- ggplot(dat, aes(x = syear, y = .data[[stat_pr]], colour = product)) +
+    geom_line() +
+    geom_point() +
+    #geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
+    scale_x_continuous(limits = c(1979, 2012)) +
+    ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
+    facet_grid(station~month_abb)
+  g
+}
+```
+
+### Comparison statistics for total monthly rainfall
+- In general all products follow a similar shape each year (high correlation)
+- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias), with a very slight underestimation compared to yearly totals
+- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
+- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
+- Slightly less variability in all products, between 80% - 100%
+- Generally higher correlations and better s.d. ratios than yearly totals
+- Results for Mansa are generally different across products, indicating possible issues with the station records
+
+```{r monthly_plots_total_rain}
+p_month_total <- gof_pr_month %>%
+  mutate(p = purrr::map(data, monthly_plots, stat_pr = "total_rain", 
+                        stat_st = "total_rain__station", product_name = product),
+         paths = here("results", "zambia", 
+                      paste0("zambia_", "month_", "total_rain", "_", product, ".png")))
+
+walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 12)
+walk(p_month_total$p, print)
+```
+
+```{r monthly_tables_total_rain, results="asis"}
+stats_tables(gof_month, "gof__total_rain")
+```
+
+### Comparison statistics for number of monthly raindays
+- Generally high correlation for all products
+- As shown in the Markov Chain models, the bias varies across products, between 1 - 14 days per month. ARC2 & CHIRPS lowest (1-2 days), TAMSAT (3 days), IMERG & RFE2 (6-7 days), ERA5 (14 days)
+- Generally the products have the same or slightly higher variability
+
+```{r monthly_plots_n_rain}
+p_month_total <- gof_pr_month %>%
+  mutate(p = purrr::map(data, monthly_plots, stat_pr = "n_rain", 
+                        stat_st = "n_rain__station", product_name = product),
+         paths = here("results", "zambia", 
+                      paste0("zambia_", "month_", "n_rain", "_", product, ".png")))
+
+walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 12)
+walk(p_month_total$p, print)
+```
+
+```{r monthly_tables_n_rain, results="asis"}
+stats_tables(gof_month, "gof__n_rain")
+```
