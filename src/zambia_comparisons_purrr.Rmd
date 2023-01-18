@@ -34,7 +34,8 @@ library(dplyr)
 ```{r setup, include=FALSE}
 source(here("src", "helper_funs.R"))
 
-zm <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
+zm_rds <- readRDS(here("data", "satellite", "merged_data.RDS"))
+zm <-zm_rds$get_data_frame(data_name = "final_merged") 
 if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
 
 zm <- zm %>% 
@@ -70,13 +71,15 @@ zm_long <- zm %>%
   mutate(rainday = rain > 1)
 
 zm_long$product <- recode(zm_long$product, rain = "station")
+zm_long$station <- recode(zm_long$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
 
 stations <- c("Moorings", "Choma", "Kasama", "Livingstone", "Magoye", "Mansa", "Mpika", "Chipata", "Petauke")
 products <- levels(zm_long$product)
 products <- products[-1]
 names(products) <- substr(products, 1, nchar(products) - 5)
 
-metadata_zm <- readRDS(here("data", "station", "cleaned", "zambia_station_metadata_cleaned.RDS"))
+metadata_zm <- readRDS(here("data", "station", "zambia_metadata.RDS"))
+metadata_zm$station <- recode(metadata_zm$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
 
 metadata_zm$station <- factor(metadata_zm$station, levels = stations)
 zm_long$station <- factor(zm_long$station, levels = stations)
@@ -100,7 +103,6 @@ skable <- function(kable_input) {
                                 full_width = FALSE)
 }
 ```
-
 
 ```{r}
 metadata_zm %>% 
@@ -238,7 +240,6 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats) {
 ```
 
 
-
 ```{r yearly_total_plots}
 p_syear_total <- gof_pr %>%
   mutate(p = purrr::map(data, yearly_plots, gof_col = "gof__total_rain", 
@@ -267,6 +268,8 @@ dat %>%
 ```{r yearly_total_rain_tables, results="asis"}
 stats_tables(gof_syear, "gof__total_rain")
 ```
+
+
 
 ```{r yearly_n_rain_plots}
 p_syear_n <- gof_pr %>%
@@ -360,7 +363,6 @@ walk(p_month_total$p, print)
 ```{r monthly_tables_total_rain, results="asis"}
 stats_tables(gof_month, "gof__total_rain")
 ```
-
 
 ```{r monthly_plots_n_rain}
 p_month_total <- gof_pr_month %>%
