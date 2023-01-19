@@ -375,3 +375,8 @@ pentad <- function(date) {
   temp_pentad <- 6*(lubridate::month(date)) - 5 + (lubridate::mday(date) > 5) + (lubridate::mday(date) > 10) + (lubridate::mday(date) > 15) + (lubridate::mday(date) > 20) + (lubridate::mday(date) > 25)
   return(temp_pentad)	
 }
+
+skable <- function(kable_input) {
+  kable_input %>% kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                                            full_width = FALSE)
+}

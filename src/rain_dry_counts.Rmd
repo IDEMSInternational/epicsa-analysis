@@ -1,0 +1,116 @@
+---
+title: "Rain/Dry day counts and proportions"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r global-options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r packs}
+library(here)
+library(tidyr)
+library(dplyr)
+library(lubridate)
+library(knitr)
+```
+
+```{r data-setup}
+source(here("src", "helper_funs.R"))
+zambia_book <- readRDS(here("data", "satellite", "merged_data.RDS"))
+nn <- zambia_book$get_data_names()
+
+zmrain <- zambia_book$get_data_frame("merged_data")
+rm(zambia_book)
+
+zmrain <- zmrain %>% 
+  mutate(month = month(date))
+
+zmrain_long <- pivot_longer(zmrain, cols = ends_with("_rain"),
+                            names_to = "prod", values_to = "value")
+```
+
+```{r rainday}
+zmrain_long <- zmrain_long %>% 
+  mutate(rainday = rain > 0.85,
+         prod_rainday = value > 0.85)
+```
+
+## Rain and dry day detection
+
+In this analysis we are analysing the ability of the satellite/reanalysis products to correctly detect rain/dry days, with respect to the station data, using data from 9 stations in Zambia.
+
+The results below focus on correct detection of dry days i.e. the proportion of dry days (from station) which are also estimated as dry from the product. A rain day threshold of 0.85 was used for both station and product data.
+
+Only days with non-missing rainfall were considered.
+
+### All year
+
+These values were also looked at per station and there was little variation between stations, so overall values for the product are shown here.
+
+Detection is high for all products, with CHIRPS and TAMSAT having the highest detection, but these results are likely inflated by the inclusion of the larger part of the year where most days are dry (dry season).
+
+```{r dry-detection}
+zmrain_drycount <- zmrain_long %>% 
+  filter(!is.na(rain) & !is.na(value)) %>%
+  group_by(prod) %>%
+  # r = rain, d = dry, 
+  # first value = station, second value = product
+  summarise(n = n(),
+            rr = sum(rainday & prod_rainday),
+            rd = sum(rainday & !prod_rainday),
+            dr = sum(!rainday & prod_rainday),
+            dd = sum(!rainday & !prod_rainday)) %>%
+  # proportion of dry days which the product detects as dry
+  mutate(correct_dry = dd/(dr + dd))
+
+zmrain_drycount %>%
+  kable(digits = 2, format.args = list(big.mark = ",")) %>%
+  skable()
+```
+
+n: number of days
+
+rr: station = rain, product = rain
+
+rd: station = rain, product = dry
+
+dr: station = dry, product = rain
+
+dd: station = dry, product = dry
+
+correct_day: proportion of dry days which the product detects as dry i.e. dd/(dr + dd)
+
+
+### Rainy period (November - April) only
+
+The table below shows the same calculations but the data were filtered to the 6-month period of the year that is typically most rainy (November to April).
+
+We see that the detection is much lower when considering only the period of the year were there is a reasonable chance of rain.
+
+However, CHIRPS and TAMSAT detection remains high and only drops by 16% and 19% respectively.
+
+```{r dry-detection-rainy-season}
+zmrain_drycount_novapr <- zmrain_long %>% 
+  filter(!is.na(rain) & !is.na(value)) %>%
+  filter(month %in% c(11:12, 1:4)) %>%
+  group_by(prod) %>%
+  # r = rain, d = dry, 
+  # first value = station, second value = product
+  summarise(n = n(),
+            rr = sum(rainday & prod_rainday),
+            rd = sum(rainday & !prod_rainday),
+            dr = sum(!rainday & prod_rainday),
+            dd = sum(!rainday & !prod_rainday)) %>%
+  # proportion of dry days which the product detects as dry
+  mutate(correct_dry_novapr = dd/(dr + dd),
+         allyear_diff = 
+           correct_dry_novapr - zmrain_drycount$correct_dry)
+
+zmrain_drycount_novapr %>%
+  kable(digits = 2, format.args = list(big.mark = ",")) %>%
+  skable()
+```
