@@ -34,12 +34,11 @@ library(dplyr)
 ```{r setup, include=FALSE}
 source(here("src", "helper_funs.R"))
 
-zm_rds <- readRDS(here("data", "satellite", "merged_data.RDS"))
-zm <-zm_rds$get_data_frame(data_name = "final_merged") 
+zm_rds <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
+#zm <-zm_rds$get_data_frame(data_name = "final_merged") 
 if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
-
 zm <- zm %>% 
-  select(station, date, rain, chirps_rain, chirp_rain, era5_rain, tamsat_rain)
+  dplyr::select(station, date, rain, chirps_rain, chirp_rain, era5_rain, tamsat_rain)
 # 1 Aug = 214
 s_doy_start <- 214
 zm <- zm %>% mutate(doy = yday_366(date),
@@ -71,15 +70,15 @@ zm_long <- zm %>%
   mutate(rainday = rain > 1)
 
 zm_long$product <- recode(zm_long$product, rain = "station")
-zm_long$station <- recode(zm_long$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
+#zm_long$station <- recode(zm_long$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
 
 stations <- c("Moorings", "Choma", "Kasama", "Livingstone", "Magoye", "Mansa", "Mpika", "Chipata", "Petauke")
 products <- levels(zm_long$product)
 products <- products[-1]
 names(products) <- substr(products, 1, nchar(products) - 5)
 
-metadata_zm <- readRDS(here("data", "station", "zambia_metadata.RDS"))
-metadata_zm$station <- recode(metadata_zm$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
+metadata_zm <- readRDS(here("data", "station", "cleaned", "zambia_station_metadata_cleaned.RDS"))
+#metadata_zm$station <- recode(metadata_zm$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
 
 metadata_zm$station <- factor(metadata_zm$station, levels = stations)
 zm_long$station <- factor(zm_long$station, levels = stations)
