@@ -43,7 +43,12 @@ zmrain_long <- zmrain_long %>%
 
 In this analysis we are analysing the ability of the satellite/reanalysis products to correctly detect rain/dry days, with respect to the station data, using data from 9 stations in Zambia.
 
-The results below focus on correct detection of dry days i.e. the proportion of dry days (from station) which are also estimated as dry from the product. A rain day threshold of 0.85 was used for both station and product data.
+The results below focus on correct detection of dry days in two ways:
+
+i)  Dry day detection: the proportion of dry days (from station) which are also estimated as dry from the product.
+ii) Correct dry days: the proportion of dry days from the product which are dry days from the station
+
+A rain day threshold of 0.85 was used for both station and product data.
 
 Only days with non-missing rainfall were considered.
 
@@ -51,7 +56,9 @@ Only days with non-missing rainfall were considered.
 
 These values were also looked at per station and there was little variation between stations, so overall values for the product are shown here.
 
-Detection is high for all products, with CHIRPS and TAMSAT having the highest detection, but these results are likely inflated by the inclusion of the larger part of the year where most days are dry (dry season).
+Dry Day Detection is high for all products, with CHIRPS and TAMSAT having the highest detection, but these results are likely inflated by the inclusion of the larger part of the year where most days are dry (dry season).
+
+Correct dry days proportions are very high for all products. This shows that there could be high confidence that a dry day from the product is an actual dry day.
 
 ```{r dry-detection}
 zmrain_drycount <- zmrain_long %>% 
@@ -65,7 +72,8 @@ zmrain_drycount <- zmrain_long %>%
             dr = sum(!rainday & prod_rainday),
             dd = sum(!rainday & !prod_rainday)) %>%
   # proportion of dry days which the product detects as dry
-  mutate(correct_dry = dd/(dr + dd))
+  mutate(dry_detection = dd / (dr + dd),
+         correct_dry = dd / (rd + dd))
 
 zmrain_drycount %>%
   kable(digits = 2, format.args = list(big.mark = ",")) %>%
@@ -82,16 +90,19 @@ dr: station = dry, product = rain
 
 dd: station = dry, product = dry
 
-correct_day: proportion of dry days which the product detects as dry i.e. dd/(dr + dd)
+dry_detection: proportion of dry days which the product detects as dry i.e. dd/(dr + dd)
 
+correct_dry: proportion of dry days from the product which are dry days i.e. dd(rd + dd)
 
 ### Rainy period (November - April) only
 
 The table below shows the same calculations but the data were filtered to the 6-month period of the year that is typically most rainy (November to April).
 
-We see that the detection is much lower when considering only the period of the year were there is a reasonable chance of rain.
+We see that the dry day detection is much lower when considering only the period of the year were there is a reasonable chance of rain.
 
 However, CHIRPS and TAMSAT detection remains high and only drops by 16% and 19% respectively.
+
+Correct dry days proportions remain fairly high even in the rainy period with lower percentage drops. This shows that even in rainy periods, we could have high confidence that a dry day detected by the product is an actual dry day.
 
 ```{r dry-detection-rainy-season}
 zmrain_drycount_novapr <- zmrain_long %>% 
@@ -106,9 +117,14 @@ zmrain_drycount_novapr <- zmrain_long %>%
             dr = sum(!rainday & prod_rainday),
             dd = sum(!rainday & !prod_rainday)) %>%
   # proportion of dry days which the product detects as dry
-  mutate(correct_dry_novapr = dd/(dr + dd),
-         allyear_diff = 
-           correct_dry_novapr - zmrain_drycount$correct_dry)
+  mutate(dry_detection_novapr = dd/(dr + dd),
+         diff_1 = 
+           dry_detection_novapr - zmrain_drycount$dry_detection,
+         correct_dry_novapr = dd / (rd + dd),
+         diff_2 = 
+           correct_dry_novapr - zmrain_drycount$correct_dry,
+         
+         )
 
 zmrain_drycount_novapr %>%
   kable(digits = 2, format.args = list(big.mark = ",")) %>%
