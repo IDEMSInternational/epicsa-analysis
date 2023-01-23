@@ -22,9 +22,12 @@ zambia_metadata <- station_metadata %>%
          latitude = LATITUDE,
          elevation = ELEVATION) %>%
   select(-elevation) %>%
-  rbind(data.frame(station=c("CHIPAT01", "PETAUK01"),
-                   longitude=c(32.64, 31.33),
-                   latitude=c(-13.64, -14.25))) %>%
+  rbind(data.frame(station=c("CHIPAT01", "PETAUK01", "Moorings"),
+                   longitude=c(32.64, 31.33, 27.55),
+                   latitude=c(-13.64, -14.25, -16.2))) %>%
   filter(station %in% unique(daily_rain$station))
+#include Moorings
+#longitude: 27.55
+#latitue: -16.2
 
 saveRDS(zambia_metadata, here("data", "station", "zambia_metadata.RDS"))
