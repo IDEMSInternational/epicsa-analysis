@@ -1,11 +1,9 @@
 ---
 title: "Zambia Comparisons"
-author: "Danny Parsons"
-date: "11/06/2020"
 output: 
   html_document:
     fig_width: 12
-    fig_height: 6
+    fig_height: 12
 ---
 
 ```{r packages, include=FALSE}
@@ -34,8 +32,7 @@ library(dplyr)
 ```{r setup, include=FALSE}
 source(here("src", "helper_funs.R"))
 
-zm_rds <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
-#zm <-zm_rds$get_data_frame(data_name = "final_merged") 
+zm <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
 if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
 zm <- zm %>% 
   dplyr::select(station, date, rain, chirps_rain, chirp_rain, era5_rain, tamsat_rain)
@@ -70,7 +67,6 @@ zm_long <- zm %>%
   mutate(rainday = rain > 1)
 
 zm_long$product <- recode(zm_long$product, rain = "station")
-#zm_long$station <- recode(zm_long$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
 
 stations <- c("Moorings", "Choma", "Kasama", "Livingstone", "Magoye", "Mansa", "Mpika", "Chipata", "Petauke")
 products <- levels(zm_long$product)
@@ -78,7 +74,6 @@ products <- products[-1]
 names(products) <- substr(products, 1, nchar(products) - 5)
 
 metadata_zm <- readRDS(here("data", "station", "cleaned", "zambia_station_metadata_cleaned.RDS"))
-#metadata_zm$station <- recode(metadata_zm$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
 
 metadata_zm$station <- factor(metadata_zm$station, levels = stations)
 zm_long$station <- factor(zm_long$station, levels = stations)
@@ -238,6 +233,15 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats) {
 }
 ```
 
+### Comparison Statistics for Total Yearly Rainfall
+
+- In general all products follow a similar shape each year (high correlation, except Chirp)
+- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias).
+- ERA5 overestimates (high bias)
+- Aside from Chirps, the products do not have very good predictive skill (Nash-Sutcliffe efficiency, usually very close to 0 or less than 0)
+- CHIRPS performs well over all measures
+- Slightly less variability in all products, between 70% - 90% (except Era5, that has higher variability in 4 out of the 8 stations considered).
+- Chipata has weired station values between 2005 and 2010 (needs investigation).
 
 ```{r yearly_total_plots}
 p_syear_total <- gof_pr %>%
@@ -267,6 +271,13 @@ dat %>%
 ```{r yearly_total_rain_tables, results="asis"}
 stats_tables(gof_syear, "gof__total_rain")
 ```
+
+### Comparison Statistics for Number of rainy days
+
+- Not so good correlation across the products
+- All products overestimate number of rainy days (generally with higher biases)
+- Almost the same variability as stations for all products 
+- All products have not so good predictive skill
 
 
 
@@ -347,6 +358,13 @@ monthly_plots <- function(df, stat_pr, stat_st, product_name) {
 }
 ```
 
+### Comparison statistics for total monthly rainfall
+- In general all products follow a similar shape each year (high correlation)
+- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias), with a very slight underestimation compared to yearly totals
+- ERA5 overestimates (high bias) 
+- CHIRPS performs well over all measures. 
+- Slightly less variability in all products, between 85% - 95%
+- Generally higher correlations and better s.d. ratios than yearly totals
 
 ```{r monthly_plots_total_rain}
 p_month_total <- gof_pr_month %>%
@@ -362,6 +380,10 @@ walk(p_month_total$p, print)
 ```{r monthly_tables_total_rain, results="asis"}
 stats_tables(gof_month, "gof__total_rain")
 ```
+### Comparison statistics for number of monthly raindays
+- Generally high correlation for all products
+- Generally the products have about the same or slightly higher or slightly lower variability
+- All products overestimate the number of rainy days but it is the least for Chirps
 
 ```{r monthly_plots_n_rain}
 p_month_total <- gof_pr_month %>%
@@ -377,3 +399,276 @@ walk(p_month_total$p, print)
 ```{r monthly_tables_n_rain, results="asis"}
 stats_tables(gof_month, "gof__n_rain")
 ```
+
+
+## Markov Chain models of the chance of rain
+
+```{r markov_chain_setup}
+zambia_markov <- zm_long_st %>% 
+  filter(!is.na(rain) & !is.na(pr_rain)) %>%
+  mutate(rainday1 = rain > 0.85,
+         pr_rainday1 = pr_rain > 0.85,
+         pr_rainday3 = pr_rain > 3,
+         pr_rainday4 = pr_rain > 4,
+         pr_rainday5 = pr_rain > 5,
+         pr_rainday2max = pr_rain > 1 & pr_rain <= 2,
+         pr_rainday3max = pr_rain > 1 & pr_rain <= 3,
+         pr_rainday4max = pr_rain > 1 & pr_rain <= 4,
+         pr_rainday5max = pr_rain > 1 & pr_rain <= 5)
+
+f_zero_order_station <- rainday1 ~ (cos(s_doy * 1 * 2 * pi/366) +
+                                    sin(s_doy * 1 * 2 * pi/366) + 
+                                    cos(s_doy * 2 * 2 * pi/366) + 
+                                    sin(s_doy * 2 * 2 * pi/366) +
+                                    cos(s_doy * 3 * 2 * pi/366) +
+                                    sin(s_doy * 3 * 2 * pi/366))
+f_zero_order_product <- update.formula(f_zero_order_station, pr_rainday1 ~ .)
+
+predict_stack_lst <- list()
+for(s in seq_along(stations)) {
+  predict_df <- data.frame(station = stations[s], s_doy = 1:366,
+                           s_doy_date = as.Date(1:366, origin = as.Date("1999/07/31")))
+  dat <- zambia_markov %>%
+    filter(station == stations[s])
+  for(i in seq_along(products)) {
+    dat_prod <- dat %>%
+      filter(product %in% c("station", products[i])) %>% 
+      filter(!is.na(rain) & !is.na(pr_rain))
+    zero_order_station <- glm(f_zero_order_station, data = dat_prod, family = binomial)
+    zero_order_product <- glm(f_zero_order_product, data = dat_prod, family = binomial)
+    #print(anova(zero_order_station, test="Chisq"))
+    predict_df[[paste0("station", "_", products[i])]] <- predict(zero_order_station, 
+                                                                 newdata = predict_df, 
+                                                                 type = "response")
+    predict_df[[products[i]]] <- predict(zero_order_product, newdata = predict_df, 
+                                         type = "response")
+    
+    f_zero_order_product_3thres <- update.formula(f_zero_order_station, pr_rainday3 ~ .)
+    f_zero_order_product_4thres <- update.formula(f_zero_order_station, pr_rainday4 ~ .)
+    f_zero_order_product_5thres <- update.formula(f_zero_order_station, pr_rainday5 ~ .)
+    f_zero_order_product_2max <- update.formula(f_zero_order_station, pr_rainday2max ~ .)
+    f_zero_order_product_3max <- update.formula(f_zero_order_station, pr_rainday3max ~ .)
+    f_zero_order_product_4max <- update.formula(f_zero_order_station, pr_rainday4max ~ .)
+    f_zero_order_product_5max <- update.formula(f_zero_order_station, pr_rainday5max ~ .)
+    fms <- list(f_zero_order_product_2max, f_zero_order_product_3max, 
+                f_zero_order_product_4max, f_zero_order_product_5max)
+    fms_thres <- list(f_zero_order_product_3thres, f_zero_order_product_4thres,
+                      f_zero_order_product_5thres)
+    mds <- list()
+    for(j in 2:(2 + length(fms) - 1)) {
+      zero_order <- glm(fms[[j - 1]], data = dat_prod, family = binomial)
+      predict_df[[paste0(products[i], "_", j, "max")]] <- predict(zero_order, 
+                                                                  newdata = predict_df, 
+                                                                  type = "response")
+    }
+    for(j in 3:(3 + length(fms_thres) - 1)) {
+      zero_order <- glm(fms_thres[[j - 2]], data = dat_prod, family = binomial)
+      predict_df[[paste0(products[i], "_", j, "thres")]] <- predict(zero_order, 
+                                                                    newdata = predict_df, 
+                                                                    type = "response")
+    }
+  }
+  
+  predict_stack <- predict_df %>% melt(id.vars = c("station", "s_doy", "s_doy_date"), 
+                                       variable.name = "product", value.name = "prob")
+
+  predict_stack$product <- as.character(predict_stack$product)
+  predict_stack$product2 <- predict_stack$product
+  predict_stack$type <- "product1"
+  
+  predict_stack <- predict_stack %>% 
+    mutate(type = ifelse(startsWith(product, "station"), "station1", type),
+           type = ifelse(endsWith(product, "max"), 
+                         substr(product, nchar(product) - 3, nchar(product)), type),
+           type = ifelse(endsWith(product, "thres"), 
+                         substr(product, nchar(product) - 5, nchar(product)), type),
+           product2 = ifelse(startsWith(product, "station"), 
+                             substr(product, 9, nchar(product)), product2),
+           product2 = ifelse(endsWith(product, "max"), 
+                             substr(product, 1, nchar(product) - 5), product2),
+           product2 = ifelse(endsWith(product, "thres"), 
+                             substr(product, 1, nchar(product) - 7), product2)
+           )
+  
+  predict_stack$type <- factor(predict_stack$type, levels = unique(predict_stack$type))
+  predict_stack_lst[[length(predict_stack_lst) + 1]] <- predict_stack
+  # Plot small amounts
+  # g <- ggplot(predict_stack, aes(x = s_doy, y = prob, colour = type)) +
+  #   geom_line() +
+  #   facet_wrap(~product2) +
+  #   scale_color_manual(values = c("black", c25[1:7])) +
+  #   ggtitle(paste("Chance of rain:", stations[s]))
+  # ggsave(here("results", "zambia", paste0("zambia_", "markov_zero", stations[s], ".png")), 
+  #        plot = g, width = 12, height = 6)
+}
+predict_stack_all <- bind_rows(predict_stack_lst)
+```
+
+```{r markov_chain_plots_stations}
+for(s in seq_along(stations)) {
+  dat <- predict_stack_all %>% filter(station == stations[s] & !grepl("max", type))
+  g <- ggplot(dat, aes(x = s_doy_date, y = prob, colour = type, size = type)) +
+    geom_line() +
+    facet_wrap(~product2) +
+    scale_size_manual(values = c(0.8, rep(0.6, 4))) +
+    scale_color_manual(values = c("black", c25[1:4])) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+    ggtitle(paste("Chance of rain:", stations[s]))
+  print(g)
+  ggsave(here("results", "zambia", 
+              paste0("zambia_", "markov_zero", "_station_", stations[s], ".png")),
+         plot = g, width = 12, height = 6)
+}
+```
+
+```{r markov_chain_plots_products}
+for(s in seq_along(products)) {
+  dat <- predict_stack_all %>% 
+    filter(product2 == products[s] & !grepl("max", type))
+  g <- ggplot(dat, aes(x = s_doy_date, y = prob, 
+                       colour = type, size = type, linetype = type)) +
+    geom_line() +
+    facet_wrap(~station) +
+    scale_color_manual(values = c("black", viridis(4, end = 0.8))) +
+    scale_size_manual(values = c(1.3, rep(0.8, 4))) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+    scale_linetype_manual(values = c("solid", rep("longdash", 4))) +
+    ggtitle(paste("Chance of rain:", products[s]))
+  print(g)
+  ggsave(here("results", "zambia", 
+              paste0("zambia_", "markov_zero", "_product_", names(products)[s], ".png")),
+         plot = g, width = 12, height = 6)
+}
+```
+
+### Distribution of rainfall amounts
+
+```{r}
+for(i in c(50, 10, 5)) {
+g <- ggplot(zm_long %>% filter(rain > 0.85), aes(x = rain, colour = product)) +
+  stat_ecdf(aes(size = product), pad = FALSE, geom = "step") +
+  coord_cartesian(xlim = c(NA, i)) +
+  scale_color_manual(values = c("black", c25[1:length(products)])) +
+  scale_size_manual(values = c(1, rep(0.5, length(products)))) +
+  facet_wrap(~station)
+print(g)
+}
+```
+
+```{r}
+for(i in c(200, 50, 10, 5, 2, 1)) {
+  g <- ggplot(zm_long %>% filter(rain > 0), 
+              aes(x = rain, y = after_stat(density), colour = product)) +
+    geom_freqpoly(aes(size = product), binwidth = 0.5, centre = 0.5) +
+    scale_color_manual(values = c("black", c25[1:length(products)])) +
+    scale_size_manual(values = c(1, rep(0.5, length(products)))) +
+    scale_x_continuous(limits = c(0, NA)) +
+    coord_cartesian(xlim = c(NA, i)) +
+    facet_wrap(~station)
+  print(g)
+}
+```
+
+```{r}
+prop_amounts <- zm_long %>%
+  filter(rain > 0.85 & station == "Livingstone") %>%
+  mutate(rain_grps = cut(rain,
+                          breaks = c(0, 0.85, 1.1, 2.1, 3.1, 4.1, 5.1, 10, 20, 30, 50, 200),
+                          include.lowest = TRUE)) %>%
+  group_by(product, rain_grps) %>%
+  summarise(n = n()) %>%
+  mutate(prop = n/sum(n), cumul = cumsum(prop))
+
+ggplot(prop_amounts, aes(x = rain_grps, y = prop, fill = product)) +
+  geom_col(position = "dodge")
+
+prop_amounts %>%
+  pivot_wider(names_from = product, values_from = cumul, id_cols = rain_grps) %>%
+  kable(digits = 2) %>%
+  skable()
+```
+
+### Detection of rainfall on the same days (November to April)
+
+```{r raindays_verify}
+raindays <- zm_long_st %>% 
+  mutate(st_rainday0p85 = rain > 0.85,
+         pr_rainday0p85 = pr_rain > 0.85,
+         pr_rainday3 = pr_rain > 3,
+         pr_rainday5 = pr_rain > 5)
+
+sverify <- function(df, obs, pred) {
+  v <- verification::verify(obs = df[[obs]], pred = df[[pred]], 
+                       obs.type = "binary", frcst.type = "binary")
+  class(v) <- "list"
+  v
+}
+
+by_st_pr <- raindays %>%
+  group_by(station, product) %>%
+  nest() %>%
+  mutate(v = purrr::map(data, sverify, obs = "st_rainday0p85", pred = "pr_rainday0p85"),
+         bias = purrr::map_dbl(v, "BIAS"))
+```
+
+```{r cont_tables, results="asis"}
+cont_tables <- function(df, name) {
+  df %>%
+    kable(caption = name, digits = 2, format.args = list(big.mark = ",")) %>%
+    skable() %>%
+    row_spec(nrow(df), bold = TRUE)
+}
+
+rain_levs <- c("rain", "no_rain")
+ver_zm <- raindays %>%
+  group_by(product, station) %>%
+  filter(month %in% c(11:12, 1:4)) %>%
+  filter(!is.na(st_rainday0p85) & !is.na(pr_rainday0p85)) %>%
+  summarise(hit = sum(st_rainday0p85 & pr_rainday0p85),
+            fa = sum(!st_rainday0p85 & pr_rainday0p85),
+            miss = sum(st_rainday0p85 & !pr_rainday0p85),
+            cneg = sum(!st_rainday0p85 & !pr_rainday0p85),
+            n = n(),
+            accuracy = (hit + cneg)/n,
+            bias = (hit + fa)/(hit + miss),
+            hit_rate = hit/(hit + miss),
+            far = fa/(hit + fa),
+            ts = hit/(hit + miss + fa),
+            ets = verification::verify(obs = st_rainday0p85, pred = pr_rainday0p85, 
+                                       obs.type = "binary", frcst.type = "binary")$ETS,
+            miss_frac = miss/n,
+            hk = (hit/(hit + miss) - (fa/(fa + cneg))),
+            hss = verification::verify(obs = st_rainday0p85, pred = pr_rainday0p85, 
+                                       obs.type = "binary", frcst.type = "binary")$HSS
+            ) %>%
+  arrange(product, station)
+
+measures <- c("accuracy", "bias", "hit_rate", "far", "ts", "ets", "miss_frac", "hk", "hss")
+names(measures) <- c("Accuracy: What fraction of the estimates were correct?
+                     (hits + correct negative)/total (1 = perfect)",
+                     "Bias: Ratio of number of rain days from estimate over number of rain days from station. 
+                     (hits + false alarms)/(hits + misses) (1 = perfect)",
+                     "Hit rate (probability of detection) What fraction of the station rain days were correctly estimated? hits/(hits + misses) (1 = perfect)",
+                     "False alarm ratio: What fraction of the estimated rain days actually did not rain? false alarms/(hits + false alarms)",
+                     "Threat score: How well did the estimate rain days correspond to the observed rain days?",
+                     "Equitable threat score: How well did the estimate rain days correspond to the station rain days (accounting for hits due to chance)?",
+                     "Proportion of misses: How many rain days in the station were not detected by the estimate?",
+                     "Hanssen and Kuipers discriminant: How well did the forecast separate the rainy days from the dry days? Uses all elements in the contingency table.",
+                     "Heidke skill score: What was the accuracy of the forecast relative to that of random chance? Measures the fraction of correct estimates after eliminating those estimates which would be correct due purely to random chance."
+                     )
+for(i in seq(measures)) {
+  df <- ver_zm %>% 
+    dplyr::select(product, station, measures[[i]]) %>%
+    pivot_wider(id_cols = station, names_from = product, values_from = measures[[i]])
+  names(df)[endsWith(names(df), "rain")] <- substr(names(df)[endsWith(names(df), "rain")],
+                                                   1, 
+                                                   nchar(names(df)
+                                                         [endsWith(names(df), "rain")]
+                                                         ) 
+                                                   - 5)
+  df[nrow(df) + 1, ] <- c(list("(All)"), as.list(as.numeric(colMeans(df[ , -1]))))
+  print(cont_tables(df, names(measures)[i]))
+}
+```
+
+
