@@ -8,7 +8,9 @@ station_df <- readRDS(here("data", "station", "zambia_station.RDS"))
 chrips_df <- readRDS(here("data", "satellite", "zambia_chirps.RDS"))
 chrip_df <- readRDS(here("data", "satellite", "zambia_chirp.RDS"))
 era5_rain_df <- readRDS(here("data", "satellite", "zambia_era5.RDS"))
-tamsat_rain_df <- readRDS(here("data", "satellite", "zambia_tamsat.RDS"))
+tamsat_rain_df <- readRDS(here("data", "satellite", "zambia_tamsat.RDS")) %>%
+  unique()
+if(anyDuplicated(tamsat_rain_df %>% dplyr::select(station, date))) stop("Duplicates found!")
 
 station_metadata <- readRDS(here("data", "station", "zambia_metadata.RDS"))
 
@@ -19,11 +21,7 @@ merged_df <- station_df %>% group_by(station, date) %>%
   left_join(tamsat_rain_df, by = c("station", "date"), suffix = c("", ""))
 merged_df$station <- recode(merged_df$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
 
-if(anyDuplicated(merged_df %>% dplyr::select(station, date))) stop("Duplicates found!")
-
 #Check and fill date gaps
-
-# Fill Date gaps
 dates_list <- list()
 merged_df <- merged_df %>% 
   mutate(year = year(date))
@@ -42,12 +40,15 @@ date_df <- bind_rows(dates_list)
 
 nr <- nrow(date_df)
 merged_df <- merged_df %>%
-  select(-year) 
+  dplyr::select(-year) 
 merged_df$date <- as.Date(merged_df$date)
 if(nrow(merged_df) < nr) {
   print(paste("Filled data with", nr - nrow(merged_df), "rows"))
   merged_df <- full_join(date_df, merged_df, by = c("station", "date"))
 }
+
+if(anyDuplicated(merged_df %>% dplyr::select(station, date))) stop("Duplicates found!")
+
 
 station_metadata$station <- recode(station_metadata$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke") 
 
