@@ -1,0 +1,132 @@
+---
+title: "EUMETSAT Cloud Cover Analysis"
+output: 
+  html_document:
+    fig_width: 12
+    fig_height: 10
+---
+
+```{r global-options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r packs}
+library(here)
+library(tidyr)
+library(dplyr)
+library(lubridate)
+library(knitr)
+library(ggplot2)
+```
+This is EUMETSAT's hourly Fractional Cloud Cover data extracted for Moorings.  
+
+It runs from November 2001 to December 2002. 
+
+The graph below shows the mean hourly cloud cover for all the years across all the years. 
+
+On average, fractional cloud cover is highest at 10 am (above 50%) and lowest at 4 am (below 30%). 
+```{r data-setup}
+source(here("src", "helper_funs.R"))
+eumetsat_cloud <- readRDS(here("data", "satellite", "zambia_eumetsat_raw.RDS")) 
+station_df <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
+
+mean_cover <- aggregate(eumetsat_cloud$CFC, by=list(hour(eumetsat_cloud$date_time)), mean)
+colnames(mean_cover) <- c("hour", "mean_cover")
+
+eumetsat_cloud$hour <- hour(eumetsat_cloud$date_time)
+eumetsat_cloud$hour_8_to_7 <- eumetsat_cloud$hour
+eumetsat_cloud$hour_8_to_7[eumetsat_cloud$hour<8] <- eumetsat_cloud$hour[eumetsat_cloud$hour<8]+24
+
+mean_cover <- aggregate(eumetsat_cloud$CFC, by=list(eumetsat_cloud$hour_8_to_7), mean)
+colnames(mean_cover) <- c("hour", "mean_cover")
+
+merged_df <- eumetsat_cloud %>% 
+  dplyr::select(station, date, hour, hour_8_to_7, CFC) %>%
+  mutate(day = day(date),
+         year = year(date),
+         month = month(date)) %>% 
+  left_join((station_df %>% 
+               dplyr::select(station, date, rain) %>%
+               dplyr::filter(station == "Moorings" & (date >= as.Date("2001-11-01") ) & (date <= as.Date("2015-12-31")))), by = c("station", "date"), suffix = c("", ""))
+
+```
+
+```{r hourly-plot}
+ggplot(data=mean_cover, aes(x=hour, y=mean_cover)) +
+  geom_line() +
+  xlab("Hour (8am-7am)") +
+  ylab("Mean Cloud Cover (%)") +
+  ggtitle("Mean Hourly Cloud Cover") +
+  scale_x_discrete(limits=c(8:31),
+                   labels=c("08","09","10","11","12","13","14","15","16","17","18","19","20","21","22","23","00","01","02","03","04","05","06","07"))
+
+```
+
+The plot below is a line plot of the mean hourly cloud cover.  Each line is a day of the year.  The days are divided into those with zero, less than 5mm, more than 5mm.  The year is divided into dec-march (rainy), Nov and April (start_end) and May-October (dry).
+
+On average:  
+
+1. Cloud cover is below 25 % for most hours on a dry day in the dry season (except between the hours of 8am to 11am when it is a little abover 25%).
+
+2. Cloud cover on the dry day in the rainy season is a little above 75% but never get down to 25% 
+
+3. Cloud cover in the rainy season when it rains 5mm or more is more than 50% and gets up to 100% 
+
+```{r}
+  moorings_mean_hour <- merged_df %>%
+    mutate(
+      rain_level = ifelse(rain == 0, "zero",
+                          ifelse(rain < 5, "less than 5mm", "more than 5mm")),
+      Year_level = ifelse(month %in% c(12, 1,2,3), "rainy",
+                           ifelse(month %in% c(11,4), "start_end","dry"))
+    ) %>% 
+  group_by(station, hour_8_to_7, Year_level, rain_level, day) %>%
+  summarise(mean_hourly_cloud = mean(CFC, na.rm = TRUE)) %>%
+  filter(!is.na(rain_level))
+
+  ggplot(moorings_mean_hour, aes(x = hour_8_to_7, y = mean_hourly_cloud, group = day)) +
+    geom_line() +
+    xlab("Hour (8am-7am)") +
+    ylab("Mean Hourly Cloud Cover (%)") +
+    ggtitle(paste0("Mean Hourly Cloud Cover")) +
+    facet_grid(rain_level ~ Year_level) +
+    scale_x_discrete(limits = seq(8, 31, by=1), 
+                     labels=c("08","09","10","11","12","13","14","15","16","17","18","19","20","21","22","23","00","01","02","03","04","05","06","07")) +
+    theme_light() 
+
+```
+
+
+These are line plots of the cloud cover (for each year).  Each line is a day of the year.  The days are divided into those with zero, less than 5mm, more than 5mm.  The year is divided into dec-march (rainy), Nov and April (start_end) and May-October (dry). 
+```{r}
+plot_cloud_cover <- function(df, yr){
+  moorings_year <- df %>%
+    #filter(!is.na(rain) | !is.na(CFC)) %>%
+    filter(year == yr) %>%
+    mutate(
+      rain_level = ifelse(rain == 0, "zero",
+                          ifelse(rain < 5, "less than 5mm", "more than 5mm")),
+      Year_level = ifelse(month %in% c(12, 1,2,3), "rainy",
+                           ifelse(month %in% c(11,4), "start_end","dry"))
+    )
+  
+  ggplot(moorings_year, aes(x = hour_8_to_7, y = CFC, group = day)) +
+    geom_line() +
+    xlab("Hour (8am-7am)") +
+    ylab("Fractional Cloud Cover (%)") +
+    ggtitle(paste0("Hourly Cloud Cover: ", yr)) +
+    facet_grid(rain_level ~ Year_level) +
+    scale_x_discrete(limits = seq(8, 31, by=1), 
+                     labels=c("08","09","10","11","12","13","14","15","16","17","18","19","20","21","22","23","00","01","02","03","04","05","06","07")) +
+    theme_light() 
+}
+
+for (yr in unique(merged_df$year)){
+  print(plot_cloud_cover(merged_df, yr))
+}
+```
+
+
+
+
