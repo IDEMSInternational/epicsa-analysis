@@ -19,6 +19,8 @@ library(lubridate)
 library(knitr)
 library(ggplot2)
 ```
+
+
 This is EUMETSAT's hourly Fractional Cloud Cover data extracted for Moorings.  
 
 It runs from November 2001 to December 2002. 
@@ -29,7 +31,18 @@ On average, fractional cloud cover is highest at 10 am (above 50%) and lowest at
 ```{r data-setup}
 source(here("src", "helper_funs.R"))
 eumetsat_cloud <- readRDS(here("data", "satellite", "zambia_eumetsat_raw.RDS")) 
-station_df <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
+s_doy_start <- 214
+station_df <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS")) %>%
+  mutate(doy = yday_366(date),
+                    year = year(date),
+                    month = month(date),
+                    s_doy = (doy - s_doy_start + 1) %% 366,
+                    s_doy = ifelse(s_doy == 0, 366, s_doy),
+                    syear = year,
+                    syear = ifelse(s_doy > (366 - s_doy_start + 1), syear - 1, syear),
+                    month = factor(month, levels = c(8:12, 1:7)),
+                    month_abb = factor(month, labels = month.abb[c(8:12, 1:7)])
+                    )
 
 mean_cover <- aggregate(eumetsat_cloud$CFC, by=list(hour(eumetsat_cloud$date_time)), mean)
 colnames(mean_cover) <- c("hour", "mean_cover")
@@ -43,9 +56,16 @@ colnames(mean_cover) <- c("hour", "mean_cover")
 
 merged_df <- eumetsat_cloud %>% 
   dplyr::select(station, date, hour, hour_8_to_7, CFC) %>%
-  mutate(day = day(date),
-         year = year(date),
-         month = month(date)) %>% 
+  mutate(doy = yday_366(date),
+                    year = year(date),
+                    month = month(date),
+                    s_doy = (doy - s_doy_start + 1) %% 366,
+                    s_doy = ifelse(s_doy == 0, 366, s_doy),
+                    syear = year,
+                    syear = ifelse(s_doy > (366 - s_doy_start + 1), syear - 1, syear),
+                    month = factor(month, levels = c(8:12, 1:7)),
+                    month_abb = factor(month, labels = month.abb[c(8:12, 1:7)])
+                    ) %>% 
   left_join((station_df %>% 
                dplyr::select(station, date, rain) %>%
                dplyr::filter(station == "Moorings" & (date >= as.Date("2001-11-01") ) & (date <= as.Date("2015-12-31")))), by = c("station", "date"), suffix = c("", ""))
@@ -81,11 +101,11 @@ On average:
       Year_level = ifelse(month %in% c(12, 1,2,3), "rainy",
                            ifelse(month %in% c(11,4), "start_end","dry"))
     ) %>% 
-  group_by(station, hour_8_to_7, Year_level, rain_level, day) %>%
+  group_by(station, hour_8_to_7, Year_level, rain_level, s_doy) %>%
   summarise(mean_hourly_cloud = mean(CFC, na.rm = TRUE)) %>%
   filter(!is.na(rain_level))
 
-  ggplot(moorings_mean_hour, aes(x = hour_8_to_7, y = mean_hourly_cloud, group = day)) +
+  ggplot(moorings_mean_hour, aes(x = hour_8_to_7, y = mean_hourly_cloud, group = s_doy)) +
     geom_line() +
     xlab("Hour (8am-7am)") +
     ylab("Mean Hourly Cloud Cover (%)") +
@@ -111,7 +131,7 @@ plot_cloud_cover <- function(df, yr){
                            ifelse(month %in% c(11,4), "start_end","dry"))
     )
   
-  ggplot(moorings_year, aes(x = hour_8_to_7, y = CFC, group = day)) +
+  ggplot(moorings_year, aes(x = hour_8_to_7, y = CFC, group = s_doy)) +
     geom_line() +
     xlab("Hour (8am-7am)") +
     ylab("Fractional Cloud Cover (%)") +
@@ -122,7 +142,7 @@ plot_cloud_cover <- function(df, yr){
     theme_light() 
 }
 
-for (yr in unique(merged_df$year)){
+for (yr in unique(merged_df$syear)){
   print(plot_cloud_cover(merged_df, yr))
 }
 ```
