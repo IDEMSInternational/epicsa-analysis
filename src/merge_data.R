@@ -11,6 +11,7 @@ era5_rain_df <- readRDS(here("data", "satellite", "zambia_era5.RDS"))
 tamsat_rain_df <- readRDS(here("data", "satellite", "zambia_tamsat.RDS")) %>%
   unique()
 if(anyDuplicated(tamsat_rain_df %>% dplyr::select(station, date))) stop("Duplicates found!")
+eumetsat_cloud <- readRDS(here("data", "satellite", "zambia_eumetsat_cfc.RDS"))
 
 station_metadata <- readRDS(here("data", "station", "zambia_metadata.RDS"))
 
@@ -52,7 +53,9 @@ if(anyDuplicated(merged_df %>% dplyr::select(station, date))) stop("Duplicates f
 
 station_metadata$station <- recode(station_metadata$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke") 
 
+eumetsat_cloud_filtered_merged <- merged_df %>% 
+  filter((date >= as.Date("2001-11-01") ) & (date <= as.Date("2015-12-31"))) %>% left_join(eumetsat_cloud, by = c("station", "date"), suffix = c("", ""))
 #save dataframes 
 saveRDS(merged_df, here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
 saveRDS(station_metadata, here("data", "station", "cleaned", "zambia_station_metadata_cleaned.RDS"))
-
+saveRDS(eumetsat_cloud_filtered_merged, here("data", "station", "cleaned", "eumetsat_cloud_filtered_merged.RDS"))

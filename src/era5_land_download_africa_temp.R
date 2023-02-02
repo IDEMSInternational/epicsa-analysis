@@ -8,7 +8,7 @@ user <- wf_set_key(user = "145981",
 
 # area: N/W/S/E
 era5_download_area <- function(area, name, variable = "total_precipitation", dates) {
-  if(missing(dates)) dates <- seq(as.Date("1960/02/01"), as.Date("2022/11/30"), by = "1 month")
+  if(missing(dates)) dates <- seq(as.Date("1960/01/01"), as.Date("2022/11/30"), by = "1 month")
   pb <- txtProgressBar(min = 0, max = length(dates), style = 3)
   for(i in seq_along(dates)) {
     cat("\n")
