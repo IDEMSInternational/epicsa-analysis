@@ -402,6 +402,11 @@ stats_tables(gof_month, "gof__n_rain")
 
 
 ## Markov Chain models of the chance of rain
+* All products model the same shape of chance of rain
+* All overestimate the chance of rain
+* With a higher rain day threshold on the product data the probabilities can be made to match very closely
+* Threshold between 2 and 5 mm depending on the product
+* The optimum threshold may depend on the station
 
 ```{r markov_chain_setup}
 zambia_markov <- zm_long_st %>% 
@@ -542,38 +547,11 @@ for(s in seq_along(products)) {
 ```
 
 ### Distribution of rainfall amounts
-
-```{r}
-for(i in c(50, 10, 5)) {
-g <- ggplot(zm_long %>% filter(rain > 0.85), aes(x = rain, colour = product)) +
-  stat_ecdf(aes(size = product), pad = FALSE, geom = "step") +
-  coord_cartesian(xlim = c(NA, i)) +
-  scale_color_manual(values = c("black", c25[1:length(products)])) +
-  scale_size_manual(values = c(1, rep(0.5, length(products)))) +
-  facet_wrap(~station)
-print(g)
-}
-```
-
-```{r}
-for(i in c(200, 50, 10, 5, 2, 1)) {
-  g <- ggplot(zm_long %>% filter(rain > 0), 
-              aes(x = rain, y = after_stat(density), colour = product)) +
-    geom_freqpoly(aes(size = product), binwidth = 0.5, centre = 0.5) +
-    scale_color_manual(values = c("black", c25[1:length(products)])) +
-    scale_size_manual(values = c(1, rep(0.5, length(products)))) +
-    scale_x_continuous(limits = c(0, NA)) +
-    coord_cartesian(xlim = c(NA, i)) +
-    facet_wrap(~station)
-  print(g)
-}
-```
-
 ```{r}
 prop_amounts <- zm_long %>%
   filter(rain > 0.85 & station == "Livingstone") %>%
   mutate(rain_grps = cut(rain,
-                          breaks = c(0, 0.85, 1.1, 2.1, 3.1, 4.1, 5.1, 10, 20, 30, 50, 200),
+                          breaks = c(0, 5.1, 20, 50, 200),
                           include.lowest = TRUE)) %>%
   group_by(product, rain_grps) %>%
   summarise(n = n()) %>%
@@ -589,6 +567,15 @@ prop_amounts %>%
 ```
 
 ### Detection of rainfall on the same days (November to April)
+
+![](cont_table.jpeg)
+
+- In general these results confirm what was seen above
+- 65 - 75 % accuracy for all products.
+- High bias for all products, as already known (more rainy days estimated than observed)
+- High hit rate and false alarm ratios, which is expected because of high bias
+- Proportion of misses is reassuringly low across products
+- Performance will change if different thresholds are introduced
 
 ```{r raindays_verify}
 raindays <- zm_long_st %>% 
@@ -636,14 +623,14 @@ ver_zm <- raindays %>%
             ts = hit/(hit + miss + fa),
             ets = verification::verify(obs = st_rainday0p85, pred = pr_rainday0p85, 
                                        obs.type = "binary", frcst.type = "binary")$ETS,
-            miss_frac = miss/n,
-            hk = (hit/(hit + miss) - (fa/(fa + cneg))),
-            hss = verification::verify(obs = st_rainday0p85, pred = pr_rainday0p85, 
-                                       obs.type = "binary", frcst.type = "binary")$HSS
+            miss_frac = miss/n #,
+            #hk = (hit/(hit + miss) - (fa/(fa + cneg))),
+            #hss = verification::verify(obs = st_rainday0p85, pred = pr_rainday0p85, 
+                                       #obs.type = "binary", frcst.type = "binary")$HSS
             ) %>%
   arrange(product, station)
 
-measures <- c("accuracy", "bias", "hit_rate", "far", "ts", "ets", "miss_frac", "hk", "hss")
+measures <- c("accuracy", "bias", "hit_rate", "far", "ts", "ets", "miss_frac")#, "hk", "hss")
 names(measures) <- c("Accuracy: What fraction of the estimates were correct?
                      (hits + correct negative)/total (1 = perfect)",
                      "Bias: Ratio of number of rain days from estimate over number of rain days from station. 
@@ -652,9 +639,9 @@ names(measures) <- c("Accuracy: What fraction of the estimates were correct?
                      "False alarm ratio: What fraction of the estimated rain days actually did not rain? false alarms/(hits + false alarms)",
                      "Threat score: How well did the estimate rain days correspond to the observed rain days?",
                      "Equitable threat score: How well did the estimate rain days correspond to the station rain days (accounting for hits due to chance)?",
-                     "Proportion of misses: How many rain days in the station were not detected by the estimate?",
-                     "Hanssen and Kuipers discriminant: How well did the forecast separate the rainy days from the dry days? Uses all elements in the contingency table.",
-                     "Heidke skill score: What was the accuracy of the forecast relative to that of random chance? Measures the fraction of correct estimates after eliminating those estimates which would be correct due purely to random chance."
+                     "Proportion of misses: How many rain days in the station were not detected by the estimate?"#,
+                     #"Hanssen and Kuipers discriminant: How well did the forecast separate the rainy days from the dry days? Uses all elements in the contingency table.",
+                     #"Heidke skill score: What was the accuracy of the forecast relative to that of random chance? Measures the fraction of correct estimates after eliminating those estimates which would be correct due purely to random chance."
                      )
 for(i in seq(measures)) {
   df <- ver_zm %>% 
