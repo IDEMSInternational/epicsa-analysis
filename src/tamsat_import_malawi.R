@@ -12,18 +12,20 @@ library(sp)
 
 source(here("src", "helper_funs.R"))
 
-daily_rain <- readRDS(here("data", "station", "zambia_station.RDS"))
-zambia_metadata <- readRDS(here("data", "station", "zambia_metadata.RDS"))
+malawi_metadata <- read.csv(here("data", "station", "malawi_metadata.csv"))
+
+malawi_metadata$YearOpened <- as.Date(malawi_metadata$YearOpened)
+summary(malawi_metadata)
 
 
 # station location check --------------------------------------------------
-zambia_sf <- ne_countries(country = "Zambia", returnclass = "sf")
-ggplot(zambia_sf) + 
+malawi_sf <- ne_countries(country = "Malawi", returnclass = "sf")
+ggplot(malawi_sf) + 
   geom_sf() +
-  geom_point(data = zambia_metadata, aes(x = longitude, y = latitude)) +
-  geom_text_repel(data = zambia_metadata, aes(x = longitude, y = latitude, label = station))
+  geom_point(data = malawi_metadata, aes(x = longitude, y = latitude)) +
+  geom_text_repel(data = malawi_metadata, aes(x = longitude, y = latitude, label = ""))
 
-rm(zambia_sf)
+rm(malawi_sf)
 
 # TAMSAT 3.1 Import -------------------------------------------------------
 
@@ -37,10 +39,10 @@ for(y in 1983:2022) {
 }
 
 nc <- nc_open(files[1])
-stopifnot(min(nc$dim$lon$vals) < min(zambia_metadata$longitude))
-stopifnot(max(nc$dim$lon$vals) > max(zambia_metadata$longitude))
-stopifnot(min(nc$dim$lat$vals) < min(zambia_metadata$latitude))
-stopifnot(max(nc$dim$lat$vals) > max(zambia_metadata$latitude))
+stopifnot(min(nc$dim$lon$vals) < min(malawi_metadata$longitude))
+stopifnot(max(nc$dim$lon$vals) > max(malawi_metadata$longitude))
+stopifnot(min(nc$dim$lat$vals) < min(malawi_metadata$latitude))
+stopifnot(max(nc$dim$lat$vals) > max(malawi_metadata$latitude))
 xs <- nc$dim$lon$vals
 ys <- nc$dim$lat$vals
 resx <- xs[2] - xs[1]
@@ -48,10 +50,10 @@ resy <- ys[2] - ys[1]
 max_dist <- sqrt((resx/2)^2 + (resy/2)^2)
 xy_points <- expand.grid(xs, ys)
 xy_extract <- closest_point(points = xy_points, 
-                            target = zambia_metadata %>% select(longitude, latitude))
-xy_extract$station <- zambia_metadata$station
-xy_extract$req_longitude <- zambia_metadata$longitude
-xy_extract$req_latitude <- zambia_metadata$latitude
+                            target = malawi_metadata %>% select(longitude, latitude))
+xy_extract$station <- malawi_metadata$station
+xy_extract$req_longitude <- malawi_metadata$longitude
+xy_extract$req_latitude <- malawi_metadata$latitude
 xy_extract$dist <- apply(xy_extract, 1, function(r) {
   sp::spDistsN1(matrix(as.numeric(c(r[["Var1"]], r[["Var2"]])), ncol = 2),
                 as.numeric(c(r[["req_longitude"]], r[["req_latitude"]])))
@@ -84,9 +86,7 @@ for(f in files) {
   }
   nc_close(nc)
 }
-zambia_tamsat <- bind_rows(tamsat_dfs)
+malawi_tamsat <- bind_rows(tamsat_dfs)
 
-zambia_tamsat <- zambia_tamsat %>% select(station, date, tamsat_rain = rfe_filled)
-
-saveRDS(zambia_tamsat, "/media/johnbagiliko/TOSHIBA EXT/E-PICSA/data/station/cleaned/zambia_tamsat.RDS")
-saveRDS(zambia_era5, here("data", "satellite", "zambia_tamsat.RDS"))
+malawi_tamsat <- malawi_tamsat %>% select(station, date, tamsat_rain = rfe_filled)
+saveRDS(malawi_tamsat, here("data", "satellite", "malawi", "malawi_tamsat.RDS"))

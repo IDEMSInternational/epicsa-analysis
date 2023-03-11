@@ -10,28 +10,31 @@ library(tidync)
 library(ncdf4)
 library(sp)
 
+
 source(here("src", "helper_funs.R"))
 
-daily_rain <- readRDS(here("data", "station", "zambia_station.RDS"))
-zambia_metadata <- readRDS(here("data", "station", "zambia_metadata.RDS"))
+malawi_metadata <- read.csv(here("data", "station", "malawi_metadata.csv"))
+
+malawi_metadata$YearOpened <- as.Date(malawi_metadata$YearOpened)
+summary(malawi_metadata)
 
 # station location check --------------------------------------------------
-zambia_sf <- ne_countries(country = "Zambia", returnclass = "sf")
-ggplot(zambia_sf) + 
+malawi_sf <- ne_countries(country = "Malawi", returnclass = "sf")
+ggplot(malawi_sf) + 
   geom_sf() +
-  geom_point(data = zambia_metadata, aes(x = longitude, y = latitude)) +
-  geom_text_repel(data = zambia_metadata, aes(x = longitude, y = latitude, label = station))
-rm(zambia_sf)
+  geom_point(data = malawi_metadata, aes(x = longitude, y = latitude)) +
+  geom_text_repel(data = malawi_metadata, aes(x = longitude, y = latitude, label = station))
+rm(malawi_sf)
 
 # CHIRP Import -----------------------------------------------------------
 
 files <- list.files("/media/johnbagiliko/TOSHIBA EXT/E-PICSA/data/satellite/CHIRP/", pattern = "chirp.", full.names = TRUE)
 
 nc <- nc_open(files[1])
-stopifnot(min(nc$dim$longitude$vals) < min(zambia_metadata$longitude))
-stopifnot(max(nc$dim$longitude$vals) > max(zambia_metadata$longitude))
-stopifnot(min(nc$dim$latitude$vals) < min(zambia_metadata$latitude))
-stopifnot(max(nc$dim$latitude$vals) > max(zambia_metadata$latitude))
+stopifnot(min(nc$dim$longitude$vals) < min(malawi_metadata$longitude))
+stopifnot(max(nc$dim$longitude$vals) > max(malawi_metadata$longitude))
+stopifnot(min(nc$dim$latitude$vals) < min(malawi_metadata$latitude))
+stopifnot(max(nc$dim$latitude$vals) > max(malawi_metadata$latitude))
 xs <- nc$dim$longitude$vals
 ys <- nc$dim$latitude$vals
 resx <- xs[2] - xs[1]
@@ -39,10 +42,10 @@ resy <- ys[2] - ys[1]
 max_dist <- sqrt((resx/2)^2 + (resy/2)^2)
 xy_points <- expand.grid(xs, ys)
 xy_extract <- closest_point(points = xy_points, 
-                            target = zambia_metadata %>% select(longitude, latitude))
-xy_extract$station <- zambia_metadata$station
-xy_extract$req_longitude <- zambia_metadata$longitude
-xy_extract$req_latitude <- zambia_metadata$latitude
+                            target = malawi_metadata %>% select(longitude, latitude))
+xy_extract$station <- malawi_metadata$station
+xy_extract$req_longitude <- malawi_metadata$longitude
+xy_extract$req_latitude <- malawi_metadata$latitude
 xy_extract$dist <- apply(xy_extract, 1, function(r) {
   sp::spDistsN1(matrix(as.numeric(c(r[["Var1"]], r[["Var2"]])), ncol = 2),
                 as.numeric(c(r[["req_longitude"]], r[["req_latitude"]])))
@@ -70,9 +73,9 @@ for(f in files) {
     setTxtProgressBar(pb, count)
   }
 }
-zambia_chirp <- bind_rows(chirp_dfs) %>%
+malawi_chirp <- bind_rows(chirp_dfs) %>%
   mutate(date = as.Date(time, origin = as.Date("1980/1/1")))
 
-zambia_chirp <- zambia_chirp %>% select(station, date, chirp_rain = precip)
+malawi_chirp <- malawi_chirp %>% select(station, date, chirp_rain = precip)
 
-saveRDS(zambia_chirp, here("data", "satellite", "zambia_chirp.RDS"))
+saveRDS(malawi_chirp, here("data", "satellite", "malawi", "malawi_chirp.RDS"))
