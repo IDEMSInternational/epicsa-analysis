@@ -35,7 +35,7 @@ source(here("src", "helper_funs.R"))
 zm <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
 if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
 zm <- zm %>% 
-  dplyr::select(station, date, rain, chirps_rain, chirp_rain, era5_rain, tamsat_rain)
+  dplyr::select(station, date, rain, chirps_rain, chirp_rain, era5_rain, tamsat_rain, agera5_rain)
 # 1 Aug = 214
 s_doy_start <- 214
 zm <- zm %>% mutate(doy = yday_366(date),
@@ -51,7 +51,8 @@ zm <- zm %>% mutate(doy = yday_366(date),
                     era5_rain = ifelse(era5_rain < 0, 0, era5_rain),
                     chirps_rain = ifelse(chirps_rain < 0, 0, chirps_rain), 
                     chirp_rain = ifelse(chirp_rain < 0, 0, chirp_rain), 
-                    tamsat_rain = ifelse(tamsat_rain < 0, 0, tamsat_rain)
+                    tamsat_rain = ifelse(tamsat_rain < 0, 0, tamsat_rain),
+                    agera5_rain = ifelse(agera5_rain <0, 0, agera5_rain)
                     )
 
 zm_long_st <- zm %>% 
