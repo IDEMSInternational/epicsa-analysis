@@ -16,12 +16,12 @@ agera5_rain_df <- readRDS(here("data", "satellite", "zambia_agera5.RDS"))
 station_metadata <- readRDS(here("data", "station", "zambia_metadata.RDS"))
 
 merged_df <- station_df %>% group_by(station, date) %>%
-  left_join(chrips_df, by = c("station", "date"), suffix = c("", "")) %>%
-  left_join(chrip_df, by = c("station", "date"), suffix = c("", "")) %>%
-  left_join(era5_rain_df, by = c("station", "date"), suffix = c("", "")) %>%
-  left_join(tamsat_rain_df, by = c("station", "date"), suffix = c("", ""))
+  full_join(chrips_df, by = c("station", "date"), suffix = c("", "")) %>%
+  full_join(chrip_df, by = c("station", "date"), suffix = c("", "")) %>%
+  full_join(era5_rain_df, by = c("station", "date"), suffix = c("", "")) %>%
+  full_join(tamsat_rain_df, by = c("station", "date"), suffix = c("", ""))
 merged_df$station <- recode(merged_df$station, CHIPAT01 = "Chipata", PETAUK01 = "Petauke")
-merged_df <- merged_df %>% left_join(agera5_rain_df, by = c("station", "date"), suffix = c("", ""))
+merged_df <- merged_df %>% full_join(agera5_rain_df, by = c("station", "date"), suffix = c("", ""))
 #Check and fill date gaps
 dates_list <- list()
 merged_df <- merged_df %>% 
