@@ -1,0 +1,258 @@
+---
+title: "Correlation"
+output: 
+  html_document:
+    fig_width: 12
+    fig_height: 8
+---
+
+```{r, include=FALSE}
+library(here)
+library(ggplot2)
+library(lubridate)
+library(reshape2)
+library(viridis)
+library(RColorBrewer)
+library(tidyr)
+library(hydroGOF)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(ggrepel)
+library(sp)
+library(tibble)
+library(verification)
+library(purrr)
+library(dplyr)
+library(ggpubr)
+```
+
+```{r}
+source(here("src", "helper_funs.R"))
+
+zm <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
+if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
+zm <- zm %>% 
+  dplyr::select(station, date, rain, chirps_rain, chirp_rain, era5_rain, tamsat_rain, agera5_rain)
+# 1 Aug = 214
+s_doy_start <- 214
+zm <- zm %>% mutate(doy = yday_366(date),
+                    year = year(date),
+                    month = month(date),
+                    s_doy = (doy - s_doy_start + 1) %% 366,
+                    s_doy = ifelse(s_doy == 0, 366, s_doy),
+                    syear = year,
+                    syear = ifelse(s_doy > (366 - s_doy_start + 1), syear - 1, syear),
+                    month = factor(month, levels = c(8:12, 1:7)),
+                    month_abb = factor(month, labels = month.abb[c(8:12, 1:7)]),
+                    rain = ifelse(rain < 0, 0, rain),
+                    era5_rain = ifelse(era5_rain < 0, 0, era5_rain),
+                    chirps_rain = ifelse(chirps_rain < 0, 0, chirps_rain), 
+                    chirp_rain = ifelse(chirp_rain < 0, 0, chirp_rain), 
+                    tamsat_rain = ifelse(tamsat_rain < 0, 0, tamsat_rain),
+                    agera5_rain = ifelse(agera5_rain <0, 0, agera5_rain)
+                    )
+
+zm_long_st <- zm %>% 
+  melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", 
+                   "doy", "s_doy", "rain"),
+       measure.vars = names(zm)[endsWith(names(zm), "rain")][-1],
+       variable.name = "product", value.name = "pr_rain")
+
+zm_long <- zm %>% 
+  melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", "doy", "s_doy"),
+       measure.vars = names(zm)[endsWith(names(zm), "rain")],
+       variable.name = "product", value.name = "rain") %>%
+  mutate(rainday = rain > 1)
+
+zm_long$product <- recode(zm_long$product, rain = "station")
+
+stations <- c("Moorings", "Choma", "Kasama", "Livingstone", "Magoye", "Mansa", "Mpika", "Chipata", "Petauke")
+products <- levels(zm_long$product)
+products <- products[-1]
+names(products) <- substr(products, 1, nchar(products) - 5)
+
+metadata_zm <- readRDS(here("data", "station", "cleaned", "zambia_station_metadata_cleaned.RDS"))
+
+metadata_zm$station <- factor(metadata_zm$station, levels = stations)
+zm_long$station <- factor(zm_long$station, levels = stations)
+
+by_station <- zm_long %>%
+  group_by(station) %>%
+  filter(!is.na(rain) & product == "station") %>%
+  summarise(first_date = first(date),
+            last_date = last(date))
+
+metadata_zm <- left_join(metadata_zm, by_station, by = "station")
+rm(by_station)
+
+zm_long <- left_join(zm_long, metadata_zm, by = "station")
+
+zm_long <- zm_long %>% 
+  filter(date >= first_date & date <= last_date)
+
+```
+
+
+```{r}
+station_min_date <- min((zm %>% filter(!is.na(rain) ))$date)
+station_max_date <- max((zm %>% filter(!is.na(rain) ))$date)
+
+chirps_min_date <-  min((zm %>% filter(!is.na(chirps_rain) ))$date)
+chirps_max_date <-  max((zm %>% filter(!is.na(chirps_rain) ))$date)
+
+chirp_min_date <- min((zm %>% filter(!is.na(chirp_rain) ))$date)
+chirp_max_date <-  max((zm %>% filter(!is.na(chirp_rain) ))$date)
+
+agera5_min_date <-  min((zm %>% filter(!is.na(agera5_rain) ))$date)
+agera5_max_date <-  max((zm %>% filter(!is.na(agera5_rain) ))$date)
+
+tamsat_min_date <-  min((zm %>% filter(!is.na(tamsat_rain) ))$date)
+tamsat_max_date <-  max((zm %>% filter(!is.na(tamsat_rain) ))$date)
+
+era5_min_date <-  min((zm %>% filter(!is.na(era5_rain) ))$date)
+era5_max_date <-  max((zm %>% filter(!is.na(era5_rain) ))$date)
+
+min_date <- max(station_min_date, chirps_min_date, chirp_min_date, agera5_min_date, tamsat_min_date, era5_min_date)
+max_date <- min(station_max_date, chirps_max_date, chirp_max_date, agera5_max_date, tamsat_max_date, era5_max_date)
+
+zm_long <- zm_long %>% 
+  #filter(date >= min_date & date <= max_date)
+  filter(syear >= year(min_date))
+zm_long_st <- zm_long_st %>% 
+  #filter(date >= min_date & date <= max_date)
+  filter(syear >= year(min_date))
+```
+
+
+## Yearly Comparisons (August to July)
+
+```{r yearly_calcs}
+by_syear <- zm_long %>%
+  group_by(station, syear, product) %>%
+  summarise(total_rain = sum(naif_nmin(rain, 355)), 
+            n_rain = sum(naif_nmin(rainday, 355)), 
+            max_rain = max(naif_nmin(rain, 350)), 
+            mean_rain = total_rain/n_rain, 
+            n_na = sum(is.na(rain))
+            )
+
+by_syear_st <- by_syear %>%
+  pivot_wider(id_cols = c(station, syear), 
+              names_from = product, values_from = total_rain:n_na, names_sep = "__") %>%
+  pivot_longer(cols = -c(station, syear, ends_with("station")), 
+               names_to = c(".value", "product"), names_sep = "__")
+```
+
+### Comparison Statistics for Number of rainy days
+
+
+```{r}
+stations
+```
+
+
+```{r}
+sequ_st <- seq(1, 9, 3)
+```
+
+```{r}
+for (i in sequ_st) {
+  st_plot <- by_syear_st %>% ungroup() %>% filter(station %in% stations[i:(i+2)]) %>% group_by(station, product) 
+  max_min_df <- st_plot %>% ungroup() %>% dplyr::select(total_rain__station, total_rain) %>% summarise(max_st = max(total_rain__station, na.rm = T), max_p = max(total_rain, na.rm = T), min_st = min(total_rain__station, na.rm = T), min_p = min(total_rain__station, na.rm = T))
+  
+  fin_max <- ceiling(max(max_min_df[[1]], max_min_df[[2]]))
+  fin_min <- floor(min(max_min_df[[3]], max_min_df[[4]]))
+  
+  st_plot %>% ggplot(aes(x = total_rain__station, y = total_rain, colour = product)) +
+    geom_point() +
+    geom_abline(slope = 1, intercept = 0, colour = "pink") +
+    scale_colour_manual(values = c25[1:5]) +
+    coord_cartesian(xlim =c(fin_min, fin_max), ylim = c(fin_min, fin_max)) +
+    stat_cor(method = "pearson", label.x = fin_min, label.y = fin_max, aes(label = after_stat(r.label)))+
+    labs(x = "Annual Total Rainfall - Station (mm)",
+         y = "Annual Total Rainfall - Station (mm)",
+         colour = "Product") +
+    facet_wrap(vars(station, product), ncol = 5) +
+    theme(text = element_text(family = "Helvetica", size = 10),
+          title = element_text(size = 10),
+          #legend.position = c(.75, .04),
+          legend.text = element_text(family = "Helvetica", size = 8),
+          legend.title = element_text(family = "Helvetica", size = 8),
+          legend.margin=margin(t = 0, unit='cm'),
+          panel.grid = element_blank(),
+          strip.background = element_rect(fill=NA))
+  ggsave(here("results/corr", paste0("annual_totals", i, ".jpeg")), width = 9.74, height = 7.74, units = "in", dpi = 1000)
+}
+```
+
+```{r}
+for (i in sequ_st) {
+  st_plot <- by_syear_st %>% ungroup() %>% filter(station %in% stations[i:(i+2)]) %>% group_by(station, product) 
+  max_min_df <- st_plot %>% ungroup() %>% dplyr::select(n_rain__station, n_rain) %>% summarise(max_st = max(n_rain__station, na.rm = T), max_p = max(n_rain, na.rm = T), min_st = min(n_rain__station, na.rm = T), min_p = min(n_rain, na.rm = T))
+  
+  fin_max <- ceiling(max(max_min_df[[1]], max_min_df[[2]]))
+  fin_min <- floor(min(max_min_df[[3]], max_min_df[[4]]))
+  
+  st_plot %>% ggplot(aes(x = n_rain__station, y = n_rain, colour = product)) +
+    geom_point() +
+    geom_abline(slope = 1, intercept = 0, colour = "pink") +
+    scale_colour_manual(values = c25[1:5]) +
+    coord_cartesian(xlim =c(fin_min, fin_max), ylim = c(fin_min, fin_max)) +
+    stat_cor(method = "pearson", label.x = fin_min, label.y = fin_max, aes(label = after_stat(r.label)))+
+    #coord_fixed() +
+    labs(x = "Number of Rainy days - station",
+       y = "Number of Rainy days - product",
+       colour = "Product") +
+    facet_wrap(vars(station, product), ncol = 5) +
+    theme(text = element_text(family = "Helvetica", size = 10),
+          title = element_text(size = 10),
+          #legend.position = c(.75, .04),
+          legend.text = element_text(family = "Helvetica", size = 8),
+          legend.title = element_text(family = "Helvetica", size = 8),
+          legend.margin=margin(t = 0, unit='cm'),
+          panel.grid = element_blank(),
+          strip.background = element_rect(fill=NA))
+  ggsave(here("results/corr", paste0("n_rain_", i, ".jpeg")), width = 9.74, height = 7.74, units = "in", dpi = 1000)
+}
+```
+
+
+```{r}
+for (i in sequ_st) {
+  st_plot <- by_syear_st %>% ungroup() %>% filter(station %in% stations[i:(i+2)]) %>% group_by(station, product) 
+  max_min_df <- st_plot %>% ungroup() %>% dplyr::select(mean_rain__station, mean_rain) %>% summarise(max_st = max(mean_rain__station, na.rm = T), max_p = max(mean_rain, na.rm = T), min_st = min(mean_rain__station, na.rm = T), min_p = min(mean_rain, na.rm = T))
+  
+  fin_max <- ceiling(max(max_min_df[[1]], max_min_df[[2]]))
+  fin_min <- floor(min(max_min_df[[3]], max_min_df[[4]]))
+  
+  st_plot %>% ggplot(aes(x = mean_rain__station, y = mean_rain, colour = product)) +
+    geom_point() +
+    geom_abline(slope = 1, intercept = 0, colour = "pink") +
+    scale_colour_manual(values = c25[1:5]) +
+    coord_cartesian(xlim =c(fin_min, fin_max), ylim = c(fin_min, fin_max)) +
+    stat_cor(method = "pearson", label.x = fin_min, label.y = fin_max, aes(label = after_stat(r.label)))+
+    #coord_fixed() +
+    labs(x = "Rain per Rainy day - staion (mm)",
+       y = "Rain per Rainy day - product (mm)",
+       colour = "Product") +
+    facet_wrap(vars(station, product), ncol = 5) +
+    theme(text = element_text(family = "Helvetica", size = 10),
+          title = element_text(size = 10),
+          #legend.position = c(.75, .04),
+          legend.text = element_text(family = "Helvetica", size = 8),
+          legend.title = element_text(family = "Helvetica", size = 8),
+          legend.margin=margin(t = 0, unit='cm'),
+          panel.grid = element_blank(),
+          strip.background = element_rect(fill=NA))
+  ggsave(here("results/corr", paste0("mean_rain_", i, ".jpeg")), width = 9.74, height = 7.74, units = "in", dpi = 1000)
+}
+```
+
+
+
+
+
+
