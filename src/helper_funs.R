@@ -1,3 +1,27 @@
+
+isLeapYear <- function(y){
+  return (y%%4 == 0 & (y%%100 != 0 | y%%400 == 0))
+}
+
+reLu <- function(x){
+  if (x < 0) {
+    return (0)
+  } else {
+    return(x)
+  }
+}
+
+#computes the number of days in a month # https://stackoverflow.com/questions/6243088/find-out-the-number-of-days-of-a-month-in-r
+numberOfDays <- function(date) {
+  m <- format(date, format="%m")
+  
+  while (format(date, format="%m") == m) {
+    date <- date + 1
+  }
+  
+  return(as.integer(format(date - 1, format="%d")))
+}
+
 naif_nmin <- function(x, n_min) {
   if(length(na.omit(x)) > 0 && sum(!is.na(x)) >= n_min) {
     na.omit(x)

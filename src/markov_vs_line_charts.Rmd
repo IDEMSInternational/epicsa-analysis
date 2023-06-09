@@ -1,9 +1,9 @@
 ---
-title: "Zambia Comparisons"
+title: "Markov Vs Line Plots of Raindays"
 output: 
   html_document:
     fig_width: 12
-    fig_height: 12
+    fig_height: 8
 ---
 
 ```{r packages, include=FALSE}
@@ -106,7 +106,6 @@ metadata_zm %>%
   skable()
 ```
 
-
 ```{r station_map, fig.width=9, fig.height=4.5}
 sf_zm <- ne_countries(country = "Zambia", returnclass = "sf")
 ggplot(sf_zm) + 
@@ -157,11 +156,12 @@ max_date <- min(station_max_date, chirps_max_date, chirp_max_date, agera5_max_da
 
 zm_long <- zm_long %>% 
   #filter(date >= min_date & date <= max_date)
-  filter(syear >= year(min_date))
+  filter(syear >= year(min_date) & syear <= 2012)
 zm_long_st <- zm_long_st %>% 
   #filter(date >= min_date & date <= max_date)
-  filter(syear >= year(min_date) & syear)
+  filter(syear >= year(min_date) & syear <= 2012)
 ```
+
 
 ## Yearly Comparisons (August to July)
 
@@ -219,21 +219,24 @@ yearly_plots <- function(df, gof_col, stat_pr, stat_st, product_name) {
     geom_point() +
     geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
     scale_x_continuous(limits = c(year(min_date), 2012)) +
+    #scale_color_manual(values = c("red","blue")) +
+    scale_y_continuous(name="Number of rainy days", limits=c(0, 180)) +
     # n
     geom_text(data = dat, aes(label = paste("n", n)), size = 4,
-              x = year(min_date), y = max_y, na.rm = TRUE, 
+             # x = 1982, y = max_y, na.rm = TRUE, inherit.aes = FALSE) +
+              x = year(min_date), y = 180, na.rm = TRUE, 
               inherit.aes = FALSE) +
     # bias
     geom_text(data = dat, aes(label = paste("bias", signif(ME, 2))), 
-              size = 4, x = year(min_date) + 6, y = max_y, na.rm = TRUE, 
+              size = 4, x = year(min_date) + 6, y = 180, na.rm = TRUE, 
               inherit.aes = FALSE) +
     # cor
     geom_text(aes(label = paste("cor", round(r, 2))), 
-              size = 4, x = year(min_date) + 14, y = max_y, na.rm = TRUE, 
+              size = 4, x = year(min_date) + 14, y = 180, na.rm = TRUE, 
               inherit.aes = FALSE) +
     # rSD
     geom_text(aes(label = paste("rSD", round(rSD, 2))), 
-              size = 4, x = year(min_date) + 22, y = max_y, na.rm = TRUE, 
+              size = 4, x = year(min_date) + 22, y = 180, na.rm = TRUE, 
               inherit.aes = FALSE) +
     ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
     facet_wrap(~station)
@@ -263,38 +266,6 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats) {
   }
 }
 ```
-
-### Comparison Statistics for Total Yearly Rainfall
-
-```{r yearly_total_plots}
-p_syear_total <- gof_pr %>%
-  mutate(p = purrr::map(data, yearly_plots, gof_col = "gof__total_rain", 
-                        stat_pr = "total_rain", stat_st = "total_rain__station", 
-                        product_name = product),
-         paths = here("results", "zambia", 
-                      paste0("zambia_", "syear_", "total_rain", "_", product, ".png")))
-
-walk2(p_syear_total$paths, p_syear_total$p, ggsave, width = 12, height = 6)
-walk(p_syear_total$p, print)
-```
-
-```{r yearly_n_obs, results="asis"}
-dat <- gof_syear %>% 
-  dplyr::select(station, product, n) %>%
-  pivot_wider(id_cols = c(station), names_from = product, values_from = n)
-
-names(dat)[endsWith(names(dat), "rain")] <- 
-  substr(names(dat)[endsWith(names(dat), "rain")], 
-         1, nchar(names(dat)[endsWith(names(dat), "rain")]) - 5)
-dat %>%
-  kable(caption = "Number of years compared") %>%
-  skable()
-```
-
-```{r yearly_total_rain_tables, results="asis"}
-stats_tables(gof_syear, "gof__total_rain")
-```
-
 ### Comparison Statistics for Number of rainy days
 
 
@@ -314,101 +285,41 @@ walk(p_syear_n$p, print)
 stats_tables(gof_syear, "gof__n_rain")
 ```
 
-## Monthly Comparisons (November to April)
-
-```{r monthly_calcs}
-by_month <- zm_long %>%
-  group_by(station, syear, month_abb, product) %>%
-  filter(month %in% c(11:12, 1:4)) %>%
-  summarise(total_rain = sum(naif_nmin(rain, 25)), 
-            n_rain = sum(naif_nmin(rainday, 25)), 
-            max_rain = max(naif_nmin(rain, 20)), 
-            mean_rain = total_rain/n_rain, 
-            n_na = sum(is.na(rain))
-            )
-
-by_month_st <- by_month %>%
-  pivot_wider(id_cols = c(station, syear, month_abb), 
-              names_from = product, values_from = total_rain:n_na, names_sep = "__") %>%
-  pivot_longer(cols = -c(station, syear, month_abb, ends_with("station")), 
-               names_to = c(".value", "product"), names_sep = "__")
-
-gof_month <- by_month_st %>%
-  group_by(station, product) %>%
-  nest() %>%
-  mutate(n = purrr::map_int(data, 
-                        ~sum(!is.na(.$total_rain__station) & !is.na(.$total_rain))),
-         gof__total_rain = purrr::map(data, dgof, "total_rain", "total_rain__station", 
-                                      na.rm = TRUE),
-         gof__n_rain = purrr::map(data, dgof, "n_rain", "n_rain__station", na.rm = TRUE),
-         # gof__mean_rain = purrr::map(data, dgof, "mean_rain", "mean_rain__station", 
-         #                             na.rm = TRUE)
-         )
-
-gof_pr_month <- gof_month %>%
-  unnest(cols = data) %>% 
-  group_by(product) %>% 
-  nest()
-```
-
-```{r monthly_plots_fun}
-monthly_plots <- function(df, stat_pr, stat_st, product_name) {
-  vals_relace <- c(product_name, "station")
-  names(vals_relace) <- c(stat_pr, stat_st)
-  dat <- df %>% 
-    filter(month_abb %in% month.abb[c(11:12, 1:4)]) %>%
-    pivot_longer(cols = c(stat_pr, stat_st), names_to = "product", values_to = stat_pr) %>%
-    mutate(product = recode(product, !!!vals_relace))
-
-  mean_df <- dat %>% 
-    group_by(station, product, month_abb) %>% 
-    summarise(m = mean(.data[[stat_pr]], na.rm = TRUE))
-
-  g <- ggplot(dat, aes(x = syear, y = .data[[stat_pr]], colour = product)) +
-    geom_line() +
-    geom_point() +
-    #geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
-    scale_x_continuous(limits = c(year(min_date), year(max_date))) +
-    ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
-    facet_grid(station~month_abb)
-  g
-}
-```
-
-### Comparison statistics for total monthly rainfall
-
-```{r monthly_plots_total_rain}
-p_month_total <- gof_pr_month %>%
-  mutate(p = purrr::map(data, monthly_plots, stat_pr = "total_rain", 
-                        stat_st = "total_rain__station", product_name = product),
-         paths = here("results", "zambia", 
-                      paste0("zambia_", "month_", "total_rain", "_", product, ".png")))
-walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 12)
-walk(p_month_total$p, print)
-```
-
-```{r monthly_tables_total_rain, results="asis"}
-stats_tables(gof_month, "gof__total_rain")
-```
-### Comparison statistics for number of monthly raindays
-
-```{r monthly_plots_n_rain}
-p_month_total <- gof_pr_month %>%
-  mutate(p = purrr::map(data, monthly_plots, stat_pr = "n_rain", 
-                        stat_st = "n_rain__station", product_name = product),
-         paths = here("results", "zambia", 
-                      paste0("zambia_", "month_", "n_rain", "_", product, ".png")))
-
-walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 12)
-walk(p_month_total$p, print)
-```
-
-```{r monthly_tables_n_rain, results="asis"}
-stats_tables(gof_month, "gof__n_rain")
-```
-
 
 ## Markov Chain models of the chance of rain
+
+```{r}
+zambia_markov_analyze <- zm_long_st %>% 
+  filter(!is.na(rain) & !is.na(pr_rain)) %>%
+  mutate(rainday1 = rain > 0.85,
+         pr_rainday1 = pr_rain > 0.85,
+         pr_rainday3 = pr_rain > 3,
+         pr_rainday4 = pr_rain > 4,
+         pr_rainday5 = pr_rain > 5,
+         pr_rainday2max = pr_rain > 1 & pr_rain <= 2,
+         pr_rainday3max = pr_rain > 1 & pr_rain <= 3,
+         pr_rainday4max = pr_rain > 1 & pr_rain <= 4,
+         pr_rainday5max = pr_rain > 1 & pr_rain <= 5)
+
+```
+
+```{r}
+zambia_markov_analyze %>% 
+  group_by(station, product, s_doy) %>%
+  summarise(nrain_st = sum(rainday1),
+            nrain_pr = sum(pr_rainday1),
+            n_days = n()) %>%
+  group_by(station, product, s_doy) %>%
+  mutate(prob_nrain_st = nrain_st/n_days,
+         prob_nrain_pr = nrain_pr/n_days) %>%
+  ungroup() %>%
+  group_by(station, product) %>%
+  summarise(mean_n_rain_st = sum(prob_nrain_st),
+            mean_n_rain_pr = sum(prob_nrain_pr)) %>%
+  kable(digits = 2) %>%
+  skable()
+```
+
 
 ```{r markov_chain_setup}
 zambia_markov <- zm_long_st %>% 
@@ -547,110 +458,3 @@ for(s in seq_along(products)) {
          plot = g, width = 12, height = 6)
 }
 ```
-
-### Distribution of rainfall amounts
-```{r}
-prop_amounts <- zm_long %>% 
-  filter(rain > 0.85 & station == "Livingstone") %>%
-  mutate(rain_grps = cut(rain,
-                          breaks = c(0, 5.1, 20, 50, 200),
-                          include.lowest = TRUE)) %>%
-  group_by(product, rain_grps) %>%
-  summarise(n = n()) %>%
-  mutate(prop = n/sum(n), cumul = cumsum(prop))
-
-ggplot(prop_amounts, aes(x = rain_grps, y = prop, fill = product)) +
-  geom_col(position = "dodge")
-
-prop_amounts %>%
-  pivot_wider(names_from = product, values_from = cumul, id_cols = rain_grps) %>%
-  kable(digits = 2) %>%
-  skable()
-```
-
-### Detection of rainfall on the same days (November to April)
-
-![](cont_table.jpeg)
-
-```{r raindays_verify}
-raindays <- zm_long_st %>% 
-  mutate(st_rainday0p85 = rain > 0.85,
-         pr_rainday0p85 = pr_rain > 0.85,
-         pr_rainday3 = pr_rain > 3,
-         pr_rainday5 = pr_rain > 5)
-
-sverify <- function(df, obs, pred) {
-  v <- verification::verify(obs = df[[obs]], pred = df[[pred]], 
-                       obs.type = "binary", frcst.type = "binary")
-  class(v) <- "list"
-  v
-}
-
-by_st_pr <- raindays %>%
-  group_by(station, product) %>%
-  nest() %>%
-  mutate(v = purrr::map(data, sverify, obs = "st_rainday0p85", pred = "pr_rainday0p85"),
-         bias = purrr::map_dbl(v, "BIAS"))
-```
-
-```{r cont_tables, results="asis"}
-cont_tables <- function(df, name) {
-  df %>%
-    kable(caption = name, digits = 2, format.args = list(big.mark = ",")) %>%
-    skable() %>%
-    row_spec(nrow(df), bold = TRUE)
-}
-
-rain_levs <- c("rain", "no_rain")
-ver_zm <- raindays %>%
-  group_by(product, station) %>%
-  filter(month %in% c(11:12, 1:4)) %>%
-  filter(!is.na(st_rainday0p85) & !is.na(pr_rainday0p85)) %>%
-  summarise(hit = sum(st_rainday0p85 & pr_rainday0p85),
-            fa = sum(!st_rainday0p85 & pr_rainday0p85),
-            miss = sum(st_rainday0p85 & !pr_rainday0p85),
-            cneg = sum(!st_rainday0p85 & !pr_rainday0p85),
-            n = n(),
-            accuracy = (hit + cneg)/n,
-            bias = (hit + fa)/(hit + miss),
-            hit_rate = hit/(hit + miss),
-            far = fa/(hit + fa),
-            ts = hit/(hit + miss + fa),
-            ets = verification::verify(obs = st_rainday0p85, pred = pr_rainday0p85, 
-                                       obs.type = "binary", frcst.type = "binary")$ETS,
-            miss_frac = miss/n #,
-            #hk = (hit/(hit + miss) - (fa/(fa + cneg))),
-            #hss = verification::verify(obs = st_rainday0p85, pred = pr_rainday0p85, 
-                                       #obs.type = "binary", frcst.type = "binary")$HSS
-            ) %>%
-  arrange(product, station)
-
-measures <- c("accuracy", "bias", "hit_rate", "far", "ts", "ets", "miss_frac")#, "hk", "hss")
-names(measures) <- c("Accuracy: What fraction of the estimates were correct?
-                     (hits + correct negative)/total (1 = perfect)",
-                     "Bias: Ratio of number of rain days from estimate over number of rain days from station. 
-                     (hits + false alarms)/(hits + misses) (1 = perfect)",
-                     "Hit rate (probability of detection) What fraction of the station rain days were correctly estimated? hits/(hits + misses) (1 = perfect)",
-                     "False alarm ratio: What fraction of the estimated rain days actually did not rain? false alarms/(hits + false alarms)",
-                     "Threat score: How well did the estimate rain days correspond to the observed rain days?",
-                     "Equitable threat score: How well did the estimate rain days correspond to the station rain days (accounting for hits due to chance)?",
-                     "Proportion of misses: How many rain days in the station were not detected by the estimate?"#,
-                     #"Hanssen and Kuipers discriminant: How well did the forecast separate the rainy days from the dry days? Uses all elements in the contingency table.",
-                     #"Heidke skill score: What was the accuracy of the forecast relative to that of random chance? Measures the fraction of correct estimates after eliminating those estimates which would be correct due purely to random chance."
-                     )
-for(i in seq(measures)) {
-  df <- ver_zm %>% 
-    dplyr::select(product, station, measures[[i]]) %>%
-    pivot_wider(id_cols = station, names_from = product, values_from = measures[[i]])
-  names(df)[endsWith(names(df), "rain")] <- substr(names(df)[endsWith(names(df), "rain")],
-                                                   1, 
-                                                   nchar(names(df)
-                                                         [endsWith(names(df), "rain")]
-                                                         ) 
-                                                   - 5)
-  df[nrow(df) + 1, ] <- c(list("(All)"), as.list(as.numeric(colMeans(df[ , -1]))))
-  print(cont_tables(df, names(measures)[i]))
-}
-```
-
-
