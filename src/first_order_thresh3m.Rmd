@@ -1,0 +1,247 @@
+---
+title: "First Order Markov Chain Model Facet"
+output: 
+  html_document:
+    fig_width: 12
+    fig_height: 12
+---
+
+```{r packages, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(here)
+library(ggplot2)
+library(lubridate)
+library(reshape2)
+library(viridis)
+library(RColorBrewer)
+library(tidyr)
+library(hydroGOF)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(ggrepel)
+library(sp)
+library(tibble)
+library(verification)
+library(purrr)
+library(dplyr)
+```
+
+```{r setup, include=FALSE}
+source(here("src", "helper_funs.R"))
+
+zm <- readRDS(here("data", "station", "cleaned", "zambia_station_cleaned.RDS"))
+if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
+zm <- zm %>% 
+  dplyr::select(station, date, rain, chirps_rain, chirp_rain, era5_rain, tamsat_rain, agera5_rain)
+# 1 Aug = 214
+s_doy_start <- 214
+zm <- zm %>% mutate(doy = yday_366(date),
+                    year = year(date),
+                    month = month(date),
+                    s_doy = (doy - s_doy_start + 1) %% 366,
+                    s_doy = ifelse(s_doy == 0, 366, s_doy),
+                    syear = year,
+                    syear = ifelse(s_doy > (366 - s_doy_start + 1), syear - 1, syear),
+                    month = factor(month, levels = c(8:12, 1:7)),
+                    month_abb = factor(month, labels = month.abb[c(8:12, 1:7)]),
+                    rain = ifelse(rain < 0, 0, rain),
+                    era5_rain = ifelse(era5_rain < 0, 0, era5_rain),
+                    chirps_rain = ifelse(chirps_rain < 0, 0, chirps_rain), 
+                    chirp_rain = ifelse(chirp_rain < 0, 0, chirp_rain), 
+                    tamsat_rain = ifelse(tamsat_rain < 0, 0, tamsat_rain),
+                    agera5_rain = ifelse(agera5_rain <0, 0, agera5_rain)
+                    )
+
+zm_long_st <- zm %>% 
+  melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", 
+                   "doy", "s_doy", "rain"),
+       measure.vars = names(zm)[endsWith(names(zm), "rain")][-1],
+       variable.name = "product", value.name = "pr_rain")
+
+zm_long <- zm %>% 
+  melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", "doy", "s_doy"),
+       measure.vars = names(zm)[endsWith(names(zm), "rain")],
+       variable.name = "product", value.name = "rain") %>%
+  mutate(rainday = rain > 1)
+
+zm_long$product <- recode(zm_long$product, rain = "station")
+
+stations <- c("Moorings", "Choma", "Kasama", "Livingstone", "Magoye", "Mansa", "Mpika", "Chipata", "Petauke")
+products <- levels(zm_long$product)
+products <- products[-1]
+names(products) <- substr(products, 1, nchar(products) - 5)
+
+metadata_zm <- readRDS(here("data", "station", "cleaned", "zambia_station_metadata_cleaned.RDS"))
+
+metadata_zm$station <- factor(metadata_zm$station, levels = stations)
+zm_long$station <- factor(zm_long$station, levels = stations)
+
+by_station <- zm_long %>%
+  group_by(station) %>%
+  filter(!is.na(rain) & product == "station") %>%
+  summarise(first_date = first(date),
+            last_date = last(date))
+
+metadata_zm <- left_join(metadata_zm, by_station, by = "station")
+rm(by_station)
+
+zm_long <- left_join(zm_long, metadata_zm, by = "station")
+
+zm_long <- zm_long %>% 
+  filter(date >= first_date & date <= last_date)
+
+skable <- function(kable_input) {
+  kable_input %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                                full_width = FALSE)
+}
+```
+
+
+```{r markov_chain_setup}
+zambia_markov <- zm_long_st %>%
+  mutate(rainday = rain > 0.85,
+         pr_rainday1 = pr_rain > 0.85,
+         pr_rainday3 = pr_rain > 3,
+         pr_rainday4 = pr_rain > 4,
+         pr_rainday5 = pr_rain > 5,
+         rainday_lag = dplyr::lag(rainday, n=1),
+         pr_rainday1_lag = dplyr::lag(pr_rainday1, n=1),
+         pr_rainday3_lag = dplyr::lag(pr_rainday3, n=1),
+         pr_rainday4_lag = dplyr::lag(pr_rainday4, n=1),
+         pr_rainday5_lag = dplyr::lag(pr_rainday5, n=1))
+
+zambia_markov$rainday_lag <- factor(zambia_markov$rainday_lag)
+zambia_markov$pr_rainday1_lag <- factor(zambia_markov$pr_rainday1_lag)
+zambia_markov$pr_rainday3_lag <- factor(zambia_markov$pr_rainday3_lag)
+zambia_markov$pr_rainday4_lag <- factor(zambia_markov$pr_rainday4_lag)
+zambia_markov$pr_rainday5_lag <- factor(zambia_markov$pr_rainday5_lag)
+
+
+basic_form <- . ~ (cos(s_doy * 1 * 2 * pi/366) + sin(s_doy * 1 * 2 * pi/366) +
+                          cos(s_doy * 2 * 2 * pi/366) + sin(s_doy * 2 * 2 * pi/366) +
+                          cos(s_doy * 3 * 2 * pi/366) + sin(s_doy* 3 * 2 * pi/366))
+
+f_first_order_station <- update.formula(basic_form,  rainday ~ (.) * rainday_lag)
+
+f_first_order_product1 <- update.formula(basic_form,  pr_rainday1 ~ (.) * pr_rainday1_lag)
+f_zero_order_product_3thres <- update.formula(basic_form,  pr_rainday3 ~ (.) * pr_rainday3_lag)
+f_zero_order_product_4thres <- update.formula(basic_form,  pr_rainday4 ~ (.) * pr_rainday4_lag)
+f_zero_order_product_5thres <- update.formula(basic_form,  pr_rainday5 ~ (.) * pr_rainday5_lag)
+
+```
+
+#threshold == 3mm for product
+
+```{r}
+predict_stack_list <- list()
+for (s in seq_along(stations)){
+  predict_df_1 <- data.frame(station = stations[s], s_doy = 1:366,
+                         lag_w = "TRUE",
+                         lag_d = "FALSE",
+                           s_doy_date = as.Date(1:366, origin = as.Date("1999/07/31"))) %>%
+  pivot_longer(cols = c(lag_w, lag_d), names_to = "lag_types", values_to = "rainday_lag")
+  predict_df_1$pr_rainday3_lag <- predict_df_1$rainday_lag
+  predict_df_1$rainday_lag <- as.factor(predict_df_1$rainday_lag)
+  predict_df_1$pr_rainday3_lag <- as.factor(predict_df_1$pr_rainday3_lag)
+  
+  dat <- zambia_markov %>%
+    filter(station == stations[s])
+  
+  for(i in seq_along(products)) {
+    dat_prod <- dat %>%
+      filter(product == products[i]) %>% 
+      filter(!is.na(rain) & !is.na(pr_rain))
+    first_order_station1 <- glm(f_first_order_station, data = dat_prod, family = binomial)
+    first_order_product3 <- glm(f_zero_order_product_3thres, data = dat_prod, family = binomial)
+    predict_df_m <- predict_df_1 
+    #predict_df_m$product <- products[[i]]
+    predict_df_m[[paste0("station", "_", products[i])]] <- predict(first_order_station1, 
+                                                                 newdata = predict_df_m, 
+                                                                 type = "response")
+    predict_df_m[[products[i]]] <- predict(first_order_product3, newdata = predict_df_m, 
+                                           type = "response")
+    
+    predict_df_m <- predict_df_m %>%
+      # Reshape the data by pivoting the "station_Chirps" and "Chirps" columns
+      pivot_longer(cols = c(7,8),
+                   names_to = "variable",
+                   values_to = "probs") 
+    
+   predict_df_m$product <- products[[i]] 
+  predict_df_m <- predict_df_m %>%
+    mutate(product1 = ifelse(startsWith(variable, "station_"), "station_1mm", "product_3mm"))
+   predict_stack_list[[length(predict_stack_list)+1]] <- predict_df_m
+  }
+}
+predict_stack_all <- bind_rows(predict_stack_list)
+```
+
+
+```{r}
+date_range <- as.Date(c("1999-11-01", "2000-05-01"))
+```
+
+```{r}
+for(s in seq_along(stations)) {
+  dat <- predict_stack_all %>% filter(station == stations[s]) 
+    # Plot graph
+    gg <- ggplot(dat, aes_string(x = "s_doy_date", y = "probs", color = "product1", linetype = "lag_types")) +
+      geom_line() +
+      facet_wrap(~product) +
+      scale_x_date(limits = date_range, date_breaks = "2 months", date_labels = "%b", expand = c(0, 0)) +
+      # Customize the linetype scale for the legend
+      scale_linetype_manual(values = c("solid", "dashed"), labels = c("D", "W")) +
+      # Add x-axis and y-axis labels
+      
+      xlab("Day of Year") +
+      ylab("Rain day frequency") +
+      labs(color = "type", linetype = "lag1") +
+      ggtitle(paste("Chance of rain:", stations[s])) +
+       theme(text = element_text(family = "Helvetica", size = 10),
+          title = element_text(size = 10),
+          #legend.position = c(.75, .04),
+          legend.text = element_text(family = "Helvetica", size = 8),
+          legend.title = element_text(family = "Helvetica", size = 8),
+          legend.margin=margin(t = 0, unit='cm'),
+          panel.grid = element_blank(),
+          strip.background = element_rect(fill=NA))
+  ggsave(here("results", "season_first_order_markov", "thresh_3mm", 
+              paste0("zambia_", "markov_season", "_station_3m", stations[s], ".png")),
+         plot = gg, width = 6, height = 6)
+}
+```
+
+
+```{r}
+for(p in seq_along(products)) {
+  dat <- predict_stack_all %>% filter(product == products[p]) 
+    # Plot graph
+    gg <- ggplot(dat, aes_string(x = "s_doy_date", y = "probs", color = "product1", linetype = "lag_types")) +
+      geom_line() +
+      facet_wrap(~station) +
+      scale_x_date(limits = date_range, date_breaks = "2 months", date_labels = "%b", expand = c(0, 0)) +
+      # Customize the linetype scale for the legend
+      scale_linetype_manual(values = c("solid", "dashed"), labels = c("D", "W")) +
+      # Add x-axis and y-axis labels
+      
+      xlab("Day of Year") +
+      ylab("Rain day frequency") +
+      labs(color = "type", linetype = "lag1") +
+      ggtitle(paste("Chance of rain:", products[p])) + 
+       theme(text = element_text(family = "Helvetica", size = 10),
+          title = element_text(size = 10),
+          #legend.position = c(.75, .04),
+          legend.text = element_text(family = "Helvetica", size = 8),
+          legend.title = element_text(family = "Helvetica", size = 8),
+          legend.margin=margin(t = 0, unit='cm'),
+          panel.grid = element_blank(),
+          strip.background = element_rect(fill=NA))
+  ggsave(here("results", "season_first_order_markov", "thresh_3mm", 
+              paste0("zambia_", "_first_order_markov_season_3m", products[p], ".png")),
+         plot = gg, width = 6, height = 6)
+}
+```
+
